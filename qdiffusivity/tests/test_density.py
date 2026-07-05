@@ -5,7 +5,7 @@ import pytest
 
 import qdiffusivity
 from qdiffusivity.density import (
-    TransverseDensityKDE,
+    TransverseDensityQKDE,
     epanechnikov_kernel,
     kde_1d,
     select_bandwidth,
@@ -141,7 +141,7 @@ def test_kde_1d_empty_data():
 
 
 # ---------------------------------------------------------------------------
-# TransverseDensityKDE AnalysisBase
+# TransverseDensityQKDE AnalysisBase
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +187,7 @@ def _make_confined_universe(
 def test_density_kde_runs_and_attrs():
     u = _make_confined_universe(n_atoms=200, n_res=10, n_frames=5, Lz=100.0)
     ag = u.select_atoms("all")
-    kde = TransverseDensityKDE(
+    kde = TransverseDensityQKDE(
         ag, dim=2, z_bot=0.0, z_top=100.0, n_points=80, bandwidth=0.5
     )
     kde.run()
@@ -206,7 +206,7 @@ def test_density_kde_rho_positive_and_normalised():
         n_atoms=300, n_res=15, n_frames=4, Lz=50.0, seed=1
     )
     ag = u.select_atoms("all")
-    kde = TransverseDensityKDE(
+    kde = TransverseDensityQKDE(
         ag, dim=2, z_bot=0.0, z_top=50.0, n_points=200, bandwidth=0.4
     )
     kde.run()
@@ -221,7 +221,7 @@ def test_density_kde_auto_bandwidth():
         n_atoms=200, n_res=10, n_frames=3, Lz=80.0, seed=2
     )
     ag = u.select_atoms("all")
-    kde = TransverseDensityKDE(
+    kde = TransverseDensityQKDE(
         ag, dim=2, z_bot=0.0, z_top=80.0, n_points=100, bandwidth="auto"
     )
     kde.run()
@@ -234,7 +234,7 @@ def test_density_kde_grouping_residues():
         n_atoms=300, n_res=30, n_frames=3, Lz=60.0, seed=3
     )
     ag = u.select_atoms("all")
-    kde = TransverseDensityKDE(
+    kde = TransverseDensityQKDE(
         ag,
         dim=2,
         z_bot=0.0,
@@ -252,25 +252,25 @@ def test_density_kde_grouping_residues():
 def test_density_kde_dim_validation():
     u = _make_confined_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDensityKDE(u.select_atoms("all"), dim=5)
+        TransverseDensityQKDE(u.select_atoms("all"), dim=5)
 
 
 def test_density_kde_grouping_validation():
     u = _make_confined_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDensityKDE(u.select_atoms("all"), grouping="molecules")
+        TransverseDensityQKDE(u.select_atoms("all"), grouping="molecules")
 
 
 def test_density_kde_bandwidth_validation():
     u = _make_confined_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDensityKDE(u.select_atoms("all"), bandwidth="notamethod")
+        TransverseDensityQKDE(u.select_atoms("all"), bandwidth="notamethod")
 
 
 def test_density_kde_auto_z_boundaries():
     u = _make_confined_universe(n_atoms=100, n_res=10, n_frames=2, Lz=40.0)
     ag = u.select_atoms("all")
-    kde = TransverseDensityKDE(ag, dim=2, n_points=40, bandwidth=0.3)
+    kde = TransverseDensityQKDE(ag, dim=2, n_points=40, bandwidth=0.3)
     kde.run()
     assert kde.z_eval[0] > 0.0
     assert kde.z_eval[-1] < 40.0
@@ -280,7 +280,7 @@ def test_density_kde_auto_z_boundaries():
 def test_density_kde_inverted_boundaries_raises():
     u = _make_confined_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
     ag = u.select_atoms("all")
-    kde = TransverseDensityKDE(
+    kde = TransverseDensityQKDE(
         ag, dim=2, z_bot=10.0, z_top=0.0, n_points=20, bandwidth=0.5
     )
     with pytest.raises(ValueError):
@@ -288,7 +288,7 @@ def test_density_kde_inverted_boundaries_raises():
 
 
 def test_density_kde_exposed_from_package():
-    assert hasattr(qdiffusivity, "TransverseDensityKDE")
+    assert hasattr(qdiffusivity, "TransverseDensityQKDE")
     assert hasattr(qdiffusivity, "epanechnikov_kernel")
     assert hasattr(qdiffusivity, "kde_1d")
     assert hasattr(qdiffusivity, "select_bandwidth")

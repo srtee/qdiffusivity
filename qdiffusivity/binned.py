@@ -138,7 +138,7 @@ def _bin_centers_from_edges(edges):
     return 0.5 * (edges[:-1] + edges[1:])
 
 
-class TransverseDensityBinned(AnalysisBase):
+class TransverseDensityQBinned(AnalysisBase):
     r"""CDF-binned transverse number-density profile.
 
     Pools per-frame positions of ``atomgroup`` along ``dim`` (the
@@ -206,11 +206,11 @@ class TransverseDensityBinned(AnalysisBase):
     ::
 
         import MDAnalysis as mda
-        from qdiffusivity import TransverseDensityBinned
+        from qdiffusivity import TransverseDensityQBinned
 
         u = mda.Universe("topology.data", "trajectory.xtc")
         ag = u.select_atoms("type 1 2")
-        binned = TransverseDensityBinned(
+        binned = TransverseDensityQBinned(
             ag, dim=2, z_bot=10.0, z_top=90.0, bins=30,
         )
         binned.run()
@@ -336,7 +336,7 @@ class TransverseDensityBinned(AnalysisBase):
             )
 
 
-class LocalDiffusivityBinned(AnalysisBase):
+class LocalDiffusivityQBinned(AnalysisBase):
     r"""CDF-binned transverse diffusivity estimator.
 
     Pools per-frame positions of ``atomgroup``, builds a CDF-uniformised
@@ -421,11 +421,11 @@ class LocalDiffusivityBinned(AnalysisBase):
     ::
 
         import MDAnalysis as mda
-        from qdiffusivity import LocalDiffusivityBinned
+        from qdiffusivity import LocalDiffusivityQBinned
 
         u = mda.Universe("topology.data", "trajectory.xtc")
         ag = u.select_atoms("type 1 2")
-        binned = LocalDiffusivityBinned(
+        binned = LocalDiffusivityQBinned(
             ag, dim=2, bins=30, ito_correction=True,
         )
         binned.run()

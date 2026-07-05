@@ -479,7 +479,7 @@ def kde_estimate(
     return D, D_std, n_eff
 
 
-class LocalDiffusivityKDE(AnalysisBase):
+class LocalDiffusivityQKDE(AnalysisBase):
     r"""Kernel-weighted local estimator for transverse diffusivity.
 
     Pools per-frame positions of ``atomgroup``, builds a CDF-uniformised
@@ -582,11 +582,11 @@ class LocalDiffusivityKDE(AnalysisBase):
     ::
 
         import MDAnalysis as mda
-        from qdiffusivity import LocalDiffusivityKDE
+        from qdiffusivity import LocalDiffusivityQKDE
 
         u = mda.Universe("topology.data", "trajectory.xtc")
         ag = u.select_atoms("type 1 2")
-        kde = LocalDiffusivityKDE(
+        kde = LocalDiffusivityQKDE(
             ag, dim=2, n_points=200, bandwidth="auto", kernel="gaussian",
         )
         kde.run()

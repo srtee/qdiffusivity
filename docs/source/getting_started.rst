@@ -8,7 +8,7 @@ built on MDAnalysis.
 Density profiles with the Epanechnikov KDE
 ------------------------------------------
 
-The :class:`qdiffusivity.TransverseDensityKDE` analysis class pools
+The :class:`qdiffusivity.TransverseDensityQKDE` analysis class pools
 per-frame positions of an :class:`~MDAnalysis.core.groups.AtomGroup` along
 the confined axis and evaluates an Epanechnikov-kernel KDE on a uniform
 grid spanning the confined region.  Kernel mass that would leak beyond the
@@ -18,12 +18,12 @@ artefact-free at the walls.
 .. code-block:: python
 
     import MDAnalysis as mda
-    from qdiffusivity import TransverseDensityKDE
+    from qdiffusivity import TransverseDensityQKDE
 
     u = mda.Universe("topology.data", "trajectory.xtc")
     ag = u.select_atoms("type 1 2")  # water atoms
 
-    kde = TransverseDensityKDE(
+    kde = TransverseDensityQKDE(
         ag,
         dim=2,
         z_bot=10.0,
@@ -68,7 +68,7 @@ See the :doc:`api` for full reference.
 Diffusivity profiles with the KDE local estimator
 --------------------------------------------------
 
-The :class:`qdiffusivity.LocalDiffusivityKDE` analysis class
+The :class:`qdiffusivity.LocalDiffusivityQKDE` analysis class
 estimates the perpendicular (transverse) and parallel diffusivities as a
 function of position along the confined axis.  It works in
 *CDF-uniformised* u-space, where the equilibrium measure is uniform so a
@@ -83,12 +83,12 @@ starting position in u-space.  Kernel mass leaking beyond
 .. code-block:: python
 
     import MDAnalysis as mda
-    from qdiffusivity import LocalDiffusivityKDE
+    from qdiffusivity import LocalDiffusivityQKDE
 
     u = mda.Universe("topology.data", "trajectory.xtc")
     ag = u.select_atoms("type 1 2")  # water atoms
 
-    kde = LocalDiffusivityKDE(
+    kde = LocalDiffusivityQKDE(
         ag,
         dim=2,
         n_points=200,
@@ -123,7 +123,7 @@ explicitly, pass ``ito_correction=True``:
 
 .. code-block:: python
 
-    kde = LocalDiffusivityKDE(
+    kde = LocalDiffusivityQKDE(
         ag, dim=2, n_points=200, ito_correction=True,
     )
     kde.run()
@@ -155,18 +155,18 @@ The ``bins`` parameter accepts:
 .. code-block:: python
 
     from qdiffusivity import (
-        TransverseDensityBinned,
-        LocalDiffusivityBinned,
+        TransverseDensityQBinned,
+        LocalDiffusivityQBinned,
     )
 
     # Density profile, 30 quantile bins (CIC):
-    binned_dens = TransverseDensityBinned(
+    binned_dens = TransverseDensityQBinned(
         ag, dim=2, z_bot=10.0, z_top=90.0, bins="quantile",
     )
     binned_dens.run()
 
     # Diffusivity profile, 20 bins, with Ito correction:
-    binned_diff = LocalDiffusivityBinned(
+    binned_diff = LocalDiffusivityQBinned(
         ag, dim=2, bins=20, ito_correction=True,
     )
     binned_diff.run()

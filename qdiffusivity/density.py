@@ -302,7 +302,7 @@ def kde_1d(z_data, z_eval, h, z_bot, z_top, *, chunk_size=50_000):
     return rho_hat, n_eff
 
 
-class TransverseDensityKDE(AnalysisBase):
+class TransverseDensityQKDE(AnalysisBase):
     r"""Epanechnikov KDE transverse number-density profile.
 
     Pools per-frame positions of ``atomgroup`` along ``dim`` (the confined
@@ -371,11 +371,11 @@ class TransverseDensityKDE(AnalysisBase):
     ::
 
         import MDAnalysis as mda
-        from qdiffusivity import TransverseDensityKDE
+        from qdiffusivity import TransverseDensityQKDE
 
         u = mda.Universe("topology.data", "trajectory.xtc")
         ag = u.select_atoms("type 1 2")
-        kde = TransverseDensityKDE(
+        kde = TransverseDensityQKDE(
             ag, dim=2, z_bot=10.0, z_top=90.0, grouping="residues",
         )
         kde.run()
