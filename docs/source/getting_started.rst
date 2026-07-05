@@ -64,3 +64,45 @@ arrays:
     rho, n_eff = kde_1d(z_pooled, z_eval, h, z_bot, z_top)
 
 See the :doc:`api` for full reference.
+
+Diffusivity profiles with the KDE local estimator
+--------------------------------------------------
+
+The :class:`qdiffusivity.TransverseDiffusivityKDE` analysis class
+estimates the perpendicular (transverse) and parallel diffusivities as a
+function of position along the confined axis.  It works in
+*CDF-uniformised* u-space, where the equilibrium measure is uniform so a
+single global bandwidth is appropriate across the whole gap (including
+near the walls).  The perpendicular estimator uses the z-space local
+estimator :math:`(\Delta z)^2/(2\Delta t)`, kernel-weighted in u-space;
+the parallel estimator uses
+:math:`(\Delta x^2+\Delta y^2)/(4\Delta t)`, kernel-weighted by the
+starting position in u-space.  Kernel mass leaking beyond
+:math:`u \in [0, 1]` is folded back by mirror reflection.
+
+.. code-block:: python
+
+    import MDAnalysis as mda
+    from qdiffusivity import TransverseDiffusivityKDE
+
+    u = mda.Universe("topology.data", "trajectory.xtc")
+    ag = u.select_atoms("type 1 2")  # water atoms
+
+    kde = TransverseDiffusivityKDE(
+        ag,
+        dim=2,
+        n_points=200,
+        bandwidth="auto",
+        kernel="gaussian",
+    )
+    kde.run()
+
+    # D_perp, D_para are in Å²/ps if the trajectory dt is in ps.
+    # Mask poorly-sampled regions using the Kish effective sample size:
+    valid = kde.n_eff_perp > 5
+
+Both the Gaussian (infinite support, smooth) and Epanechnikov (compact
+support, no leakage) kernels are available via ``kernel="gaussian"`` or
+``kernel="epanechnikov"``.  The class is an
+:class:`~MDAnalysis.analysis.base.AnalysisBase` subclass, so the usual
+``run(start, stop, step)`` interface applies.
