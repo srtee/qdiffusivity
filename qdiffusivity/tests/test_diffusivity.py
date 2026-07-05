@@ -105,7 +105,7 @@ def test_select_diff_bandwidth_invalid_method():
 def test_build_cdf_monotonic_in_bounds():
     rng = np.random.default_rng(13)
     z = rng.normal(50.0, 5.0, size=20_000)
-    P, P_inv, rho, z_sorted, p_vals = build_cdf(z)
+    P, P_inv, rho, rho_prime, z_sorted, p_vals = build_cdf(z)
     z_grid = np.linspace(40.0, 60.0, 101)
     u_grid = P(z_grid)
     assert np.all(np.diff(u_grid) >= -1e-12)
@@ -118,7 +118,7 @@ def test_build_cdf_monotonic_in_bounds():
 def test_build_cdf_inverse_roundtrip():
     rng = np.random.default_rng(14)
     z = rng.normal(0.0, 1.0, size=10_000)
-    P, P_inv, rho, z_sorted, p_vals = build_cdf(z)
+    P, P_inv, rho, rho_prime, z_sorted, p_vals = build_cdf(z)
     z_test = np.linspace(-2.0, 2.0, 21)
     u_test = P(z_test)
     z_back = P_inv(u_test)
@@ -128,12 +128,35 @@ def test_build_cdf_inverse_roundtrip():
 def test_build_cdf_rho_positive_and_integrates_to_one():
     rng = np.random.default_rng(15)
     z = rng.normal(50.0, 5.0, size=20_000)
-    P, P_inv, rho, z_sorted, p_vals = build_cdf(z)
+    P, P_inv, rho, rho_prime, z_sorted, p_vals = build_cdf(z)
     z_grid = np.linspace(40.0, 60.0, 2001)
     rho_vals = rho(z_grid)
     assert np.all(rho_vals >= 0.0)
     integral = np.trapezoid(rho_vals, z_grid)
     assert integral == pytest.approx(1.0, abs=0.1)
+
+
+def test_build_cdf_rho_prime_zero_at_mode():
+    # For a symmetric Gaussian-like density the derivative rho' should
+    # be ~zero at the mode and have opposite signs on either side.
+    rng = np.random.default_rng(19)
+    z = rng.normal(50.0, 5.0, size=40_000)
+    P, P_inv, rho, rho_prime, z_sorted, p_vals = build_cdf(z)
+    rho(np.array([45.0, 50.0, 55.0]))  # exercise rho closure
+    rho_p = rho_prime(np.array([45.0, 50.0, 55.0]))
+    # Derivative positive below mode, ~zero at mode, negative above.
+    assert rho_p[0] > 0
+    assert rho_p[2] < 0
+    assert rho_p[1] == pytest.approx(0.0, abs=2e-3)
+
+
+def test_build_cdf_rho_prime_finite():
+    rng = np.random.default_rng(20)
+    z = rng.uniform(0.0, 100.0, size=20_000)
+    P, P_inv, rho, rho_prime, z_sorted, p_vals = build_cdf(z)
+    z_grid = np.linspace(10.0, 90.0, 101)
+    rho_p = rho_prime(z_grid)
+    assert np.all(np.isfinite(rho_p))
 
 
 def test_build_cdf_empty_raises():
@@ -375,3 +398,100 @@ def test_diffusion_kde_exposed_from_package():
     assert hasattr(qdiffusivity, "gaussian_kernel")
     assert hasattr(qdiffusivity, "kde_estimate")
     assert hasattr(qdiffusivity, "select_diff_bandwidth")
+
+
+# ---------------------------------------------------------------------------
+# Itô correction
+# ---------------------------------------------------------------------------
+
+
+def test_ito_correction_default_is_off():
+    u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=30)
+    ag = u.select_atoms("all")
+    kde = TransverseDiffusivityKDE(ag, dim=2, n_points=20, bandwidth=0.1)
+    kde.run()
+    assert kde.ito_bias is None
+
+
+def test_ito_correction_sets_attribute():
+    u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=31)
+    ag = u.select_atoms("all")
+    kde = TransverseDiffusivityKDE(
+        ag, dim=2, n_points=20, bandwidth=0.1, ito_correction=True
+    )
+    kde.run()
+    assert kde.ito_bias is not None
+    assert kde.ito_bias.shape == (20,)
+    assert np.all(np.isfinite(kde.ito_bias))
+    assert np.all(kde.ito_bias >= 0.0)
+
+
+def test_ito_correction_reduces_D_perp():
+    # With ito_correction=True the corrected D_perp should be <= the
+    # uncorrected D_perp (the bias is non-negative).
+    u = _make_diffusion_universe(n_atoms=200, n_frames=20, Lz=60.0, seed=32)
+    ag = u.select_atoms("all")
+    kde_unc = TransverseDiffusivityKDE(ag, dim=2, n_points=40, bandwidth=0.08)
+    kde_unc.run()
+    kde_cor = TransverseDiffusivityKDE(
+        ag, dim=2, n_points=40, bandwidth=0.08, ito_correction=True
+    )
+    kde_cor.run()
+    assert np.all(kde_cor.D_perp <= kde_unc.D_perp + 1e-12)
+
+
+def test_ito_correction_uniform_density_zero_bias():
+    # A uniform equilibrium density has rho' == 0, so the Itô bias
+    # should be identically zero and the corrected D_perp should equal
+    # the uncorrected D_perp.
+    u = _make_diffusion_universe(n_atoms=500, n_frames=20, Lz=60.0, seed=33)
+    ag = u.select_atoms("all")
+    kde = TransverseDiffusivityKDE(
+        ag, dim=2, n_points=40, bandwidth=0.1, ito_correction=True
+    )
+    kde.run()
+    bulk = (kde.z_eval > 20.0) & (kde.z_eval < 40.0)
+    # In the bulk the density is ~uniform, so rho' ~ 0 and bias ~ 0
+    # (residual Poisson noise in rho' gives a small nonzero value).
+    assert np.all(kde.ito_bias[bulk] < 1e-3)
+
+
+def test_ito_correction_does_not_affect_D_para():
+    # The parallel estimator has zero Itô bias; the corrected and
+    # uncorrected D_para should be identical.
+    u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=34)
+    ag = u.select_atoms("all")
+    kde_unc = TransverseDiffusivityKDE(ag, dim=2, n_points=30, bandwidth=0.1)
+    kde_unc.run()
+    kde_cor = TransverseDiffusivityKDE(
+        ag, dim=2, n_points=30, bandwidth=0.1, ito_correction=True
+    )
+    kde_cor.run()
+    assert np.allclose(kde_cor.D_para, kde_unc.D_para)
+
+
+def test_ito_correction_recovers_known_diffusivity():
+    # With a uniform equilibrium density the Itô bias is zero, so the
+    # corrected estimator should still recover the input D_perp.
+    D_perp_true = 0.05
+    u = _make_diffusion_universe(
+        n_atoms=400,
+        n_frames=40,
+        Lz=60.0,
+        D_perp=D_perp_true,
+        D_para=0.1,
+        seed=35,
+    )
+    ag = u.select_atoms("all")
+    kde = TransverseDiffusivityKDE(
+        ag,
+        dim=2,
+        n_points=60,
+        bandwidth=0.08,
+        ito_correction=True,
+    )
+    kde.run()
+    bulk = (kde.z_eval > 20.0) & (kde.z_eval < 40.0)
+    valid = kde.n_eff_perp > 5
+    bulk_perp = np.median(kde.D_perp[bulk & valid])
+    assert bulk_perp == pytest.approx(D_perp_true, rel=0.3)

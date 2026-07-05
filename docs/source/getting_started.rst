@@ -106,3 +106,29 @@ support, no leakage) kernels are available via ``kernel="gaussian"`` or
 ``kernel="epanechnikov"``.  The class is an
 :class:`~MDAnalysis.analysis.base.AnalysisBase` subclass, so the usual
 ``run(start, stop, step)`` interface applies.
+
+Itô correction
+~~~~~~~~~~~~~~~
+
+The perpendicular local estimator :math:`(\Delta z)^2/(2\Delta t)` carries
+an :math:`O(\Delta t)` Itô bias
+:math:`\frac{\Delta t}{2}\Phi(z)^2` where
+:math:`\Phi = D(z)\,\rho'(z)/\rho(z)` in the isothermal
+(Hänggi–Klimontovich) convention.  In wall-bound geometries with
+adsorption layers this bias is *self-suppressing* (the :math:`D^2`
+prefactor and the anti-correlation of :math:`D` with
+:math:`|V'| = |\rho'/\rho|` make it small — a few % at the walls,
+negligible in bulk), so it is **off by default**.  To subtract it
+explicitly, pass ``ito_correction=True``:
+
+.. code-block:: python
+
+    kde = TransverseDiffusivityKDE(
+        ag, dim=2, n_points=200, ito_correction=True,
+    )
+    kde.run()
+    # kde.ito_bias holds the subtracted (Δt/2) Φ² array; kde.D_perp
+    # is the bias-corrected perpendicular diffusivity (clipped >= 0).
+
+The parallel estimator has **zero** Itô bias (no parallel drift) and is
+unaffected by this option.

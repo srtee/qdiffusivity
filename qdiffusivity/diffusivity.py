@@ -272,16 +272,20 @@ def build_cdf(z_pooled):
     r"""Build a smooth CDF from pooled positions.
 
     Returns the closures ``P(z)`` (maps physical z to ``[0, 1]``),
-    ``P_inv(p)`` (maps ``[0, 1]`` back to z), and ``rho(z)`` (the
-    equilibrium density, estimated as a Gaussian-smoothed histogram
-    derivative of the CDF and interpolated back to arbitrary z).
+    ``P_inv(p)`` (maps ``[0, 1]`` back to z), ``rho(z)`` (the equilibrium
+    density, estimated as a Gaussian-smoothed histogram derivative of the
+    CDF and interpolated back to arbitrary z), and ``rho_prime(z)`` (the
+    spatial derivative of ``rho``, used by the Itô correction).
 
     Uses the empirical sorted positions with midrank
     ``p = (i + 0.5)/n`` so the CDF never returns exactly 0 or 1 at the
     extremes.  The density ``rho`` is computed from a coarse histogram
     (200 bins) Gaussian-smoothed to suppress Poisson noise before
     interpolation — the perpendicular KDE would otherwise double any
-    noise in ``rho`` via the :math:`\rho^{-2}` conversion.
+    noise in ``rho`` via the :math:`\rho^{-2}` conversion.  The
+    derivative ``rho_prime`` is obtained from the same smoothed histogram
+    by central finite differences and interpolation, so it inherits the
+    noise suppression.
 
     Parameters
     ----------
@@ -296,6 +300,9 @@ def build_cdf(z_pooled):
         Inverse CDF closure ``P_inv(p) -> z``.
     rho : callable
         Equilibrium density closure ``rho(z) -> float`` (integrates to 1).
+    rho_prime : callable
+        Spatial derivative closure ``rho_prime(z) -> float`` (same units
+        as ``rho`` per length).
     z_sorted : numpy.ndarray
         Sorted unique positions used to build the CDF.
     p_vals : numpy.ndarray
@@ -338,17 +345,40 @@ def build_cdf(z_pooled):
     if integral > 0:
         rho_smooth = rho_smooth / integral
 
+    # Spatial derivative of rho via central finite differences on the
+    # smoothed histogram grid, then interpolated back to arbitrary z.
+    # Same noise-suppression as rho itself (the Gaussian smoothing
+    # precedes the differencing, so the derivative is not dominated by
+    # Poisson noise from the histogram bins).
+    rho_prime_smooth = np.empty_like(rho_smooth)
+    rho_prime_smooth[1:-1] = (
+        rho_smooth[2:] - rho_smooth[:-2]
+    ) / (2.0 * bin_width)
+    rho_prime_smooth[0] = rho_prime_smooth[1]
+    rho_prime_smooth[-1] = rho_prime_smooth[-2]
+
     def rho(z):
         z = np.asarray(z, dtype=float)
         return np.interp(
             z, centers, rho_smooth, left=rho_smooth[0], right=rho_smooth[-1]
         )
 
-    return P, P_inv, rho, z_sorted, p_vals
+    def rho_prime(z):
+        z = np.asarray(z, dtype=float)
+        return np.interp(
+            z,
+            centers,
+            rho_prime_smooth,
+            left=rho_prime_smooth[0],
+            right=rho_prime_smooth[-1],
+        )
+
+    return P, P_inv, rho, rho_prime, z_sorted, p_vals
 
 
 def kde_estimate(
-    u_data, d_data, u_eval, h, kernel="gaussian", chunk_size=50_000
+    u_data, d_data, u_eval, h, kernel="gaussian",
+    chunk_size=50_000,
 ):
     r"""Kernel-weighted local estimator in u-space with mirror reflection.
 
@@ -481,6 +511,23 @@ class TransverseDiffusivityKDE(AnalysisBase):
         (default) the trajectory's ``dt`` (:attr:`ts.dt`) is used.  The
         diffusivity is returned in (length² / time) with length in Å and
         time in whatever unit ``dt`` carries.
+    ito_correction : bool, optional
+        If ``True``, subtract the :math:`O(\Delta t)` Itô bias
+
+        .. math::
+
+           \text{bias}_\perp(z) = \frac{\Delta t}{2}\,\Phi(z)^2
+           = \frac{\Delta t}{2}\left[D(z)\,\frac{\rho'(z)}{\rho(z)}\right]^2
+
+        from the perpendicular estimator, where :math:`\Phi = -\beta D V'
+        = D\,\rho'/\rho` in the isothermal (Hänggi–Klimontovich)
+        convention.  The bias is computed from the uncorrected
+        :math:`D_\perp` and the equilibrium density :math:`\rho` (and its
+        derivative) produced by :func:`build_cdf`.  The parallel
+        estimator has **zero** Itô bias (no parallel drift) and is left
+        unchanged.  Default ``False`` (the bias is self-suppressing in
+        the electrode geometry — see the project notes — and within
+        the statistical error bars at typical frame spacings).
 
     Attributes
     ----------
@@ -490,11 +537,16 @@ class TransverseDiffusivityKDE(AnalysisBase):
         ``(M,)`` evaluation grid in u-space (uniform, cell-centred).
     D_perp : numpy.ndarray
         ``(M,)`` perpendicular diffusivity (length²/time), clipped to
-        be non-negative.
+        be non-negative.  When ``ito_correction=True`` the Itô bias
+        (see :attr:`ito_bias`) is subtracted *before* clipping.
     D_perp_std : numpy.ndarray
         ``(M,)`` standard error of :math:`D_\perp`.
     n_eff_perp : numpy.ndarray
         ``(M,)`` Kish effective sample size for :math:`D_\perp`.
+    ito_bias : numpy.ndarray or None
+        ``(M,)`` Itô bias :math:`\frac{\Delta t}{2}\Phi^2` subtracted
+        from :math:`D_\perp` when ``ito_correction=True``; ``None``
+        otherwise.
     D_para : numpy.ndarray
         ``(M,)`` parallel diffusivity (length²/time).
     D_para_std : numpy.ndarray
@@ -512,6 +564,9 @@ class TransverseDiffusivityKDE(AnalysisBase):
         Time step used in the estimator (length²/time units).
     P, P_inv, rho : callables
         CDF, inverse-CDF and equilibrium density closures (see
+        :func:`build_cdf`).
+    rho_prime : callable
+        Spatial derivative of the equilibrium density (see
         :func:`build_cdf`).
 
     Notes
@@ -547,6 +602,7 @@ class TransverseDiffusivityKDE(AnalysisBase):
         bandwidth="auto",
         kernel: str = "gaussian",
         dt=None,
+        ito_correction: bool = False,
         chunk_size: int = 50_000,
     ):
         super().__init__(atomgroup.universe.trajectory)
@@ -570,6 +626,7 @@ class TransverseDiffusivityKDE(AnalysisBase):
             )
         self._kernel = kernel
         self._dt = dt
+        self._ito_correction = bool(ito_correction)
         self._chunk_size = int(chunk_size)
 
     def _prepare(self):
@@ -623,7 +680,7 @@ class TransverseDiffusivityKDE(AnalysisBase):
 
         # Pass 1: build CDF from pooled wrapped-z.
         z_pooled = pos_unwrapped[:, :, self._dim].ravel()
-        self.P, self.P_inv, self.rho, _, _ = build_cdf(z_pooled)
+        self.P, self.P_inv, self.rho, self.rho_prime, _, _ = build_cdf(z_pooled)
 
         # Evaluation grid: uniform in u-space, mapped back to z.
         M = self._n_points
@@ -653,6 +710,26 @@ class TransverseDiffusivityKDE(AnalysisBase):
             kernel=self._kernel,
             chunk_size=self._chunk_size,
         )
+
+        # Itô bias of the perpendicular estimator:
+        #   bias(z) = (Δt/2) Φ(z)^2,  Φ = -β D V' = D ρ'/ρ
+        # in the isothermal convention (β·k_BT = 1).  Computed from the
+        # uncorrected D_perp and the equilibrium density.  The parallel
+        # estimator has zero Itô bias (no parallel drift).
+        if self._ito_correction:
+            rho_eval = self.rho(self.z_eval)
+            rho_prime_eval = self.rho_prime(self.z_eval)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                phi = np.where(
+                    rho_eval > 0,
+                    self.D_perp * rho_prime_eval / rho_eval,
+                    0.0,
+                )
+            self.ito_bias = 0.5 * dt * phi**2
+            self.D_perp = self.D_perp - self.ito_bias
+        else:
+            self.ito_bias = None
+
         self.D_perp = np.clip(self.D_perp, 0, None)
 
         # Parallel: Δx² + Δy², only z_start mapped to u.  Parallel
