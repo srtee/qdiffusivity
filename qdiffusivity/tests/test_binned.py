@@ -5,8 +5,8 @@ import pytest
 
 import qdiffusivity
 from qdiffusivity.binned import (
+    LocalDiffusivityBinned,
     TransverseDensityBinned,
-    TransverseDiffusivityBinned,
     cic_assign,
     resolve_bins,
 )
@@ -287,14 +287,14 @@ def test_density_binned_grouping_validation():
 
 
 # ---------------------------------------------------------------------------
-# TransverseDiffusivityBinned
+# LocalDiffusivityBinned
 # ---------------------------------------------------------------------------
 
 
 def test_diffusion_binned_runs_and_attrs():
     u = _make_diffusion_universe(n_atoms=100, n_frames=20, Lz=80.0, seed=60)
     ag = u.select_atoms("all")
-    binned = TransverseDiffusivityBinned(ag, dim=2, bins=20)
+    binned = LocalDiffusivityBinned(ag, dim=2, bins=20)
     binned.run()
     assert binned.D_perp.shape == (20,)
     assert binned.D_para.shape == (20,)
@@ -316,7 +316,7 @@ def test_diffusion_binned_recovers_known_diffusivity():
         seed=61,
     )
     ag = u.select_atoms("all")
-    binned = TransverseDiffusivityBinned(ag, dim=2, bins=20)
+    binned = LocalDiffusivityBinned(ag, dim=2, bins=20)
     binned.run()
     bulk = (binned.z_centers > 20.0) & (binned.z_centers < 40.0)
     valid = binned.n_eff_perp > 5
@@ -329,7 +329,7 @@ def test_diffusion_binned_recovers_known_diffusivity():
 def test_diffusion_binned_quantile_string():
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=62)
     ag = u.select_atoms("all")
-    binned = TransverseDiffusivityBinned(ag, dim=2, bins="quantile")
+    binned = LocalDiffusivityBinned(ag, dim=2, bins="quantile")
     binned.run()
     assert binned.D_perp.shape == (30,)
 
@@ -338,7 +338,7 @@ def test_diffusion_binned_explicit_edges():
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=63)
     ag = u.select_atoms("all")
     edges = np.array([0.1, 0.3, 0.7, 0.9])
-    binned = TransverseDiffusivityBinned(ag, dim=2, bins=edges)
+    binned = LocalDiffusivityBinned(ag, dim=2, bins=edges)
     binned.run()
     assert binned.D_perp.shape == (5,)  # padded with 0 and 1
 
@@ -346,12 +346,12 @@ def test_diffusion_binned_explicit_edges():
 def test_diffusion_binned_dim_validation():
     u = _make_diffusion_universe(n_atoms=10, n_frames=3, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDiffusivityBinned(u.select_atoms("all"), dim=5)
+        LocalDiffusivityBinned(u.select_atoms("all"), dim=5)
 
 
 def test_diffusion_binned_single_frame_raises():
     u = _make_diffusion_universe(n_atoms=10, n_frames=1, Lz=10.0)
-    binned = TransverseDiffusivityBinned(u.select_atoms("all"), bins=10)
+    binned = LocalDiffusivityBinned(u.select_atoms("all"), bins=10)
     with pytest.raises(ValueError):
         binned.run()
 
@@ -359,7 +359,7 @@ def test_diffusion_binned_single_frame_raises():
 def test_diffusion_binned_ito_correction_default_off():
     u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=64)
     ag = u.select_atoms("all")
-    binned = TransverseDiffusivityBinned(ag, dim=2, bins=10)
+    binned = LocalDiffusivityBinned(ag, dim=2, bins=10)
     binned.run()
     assert binned.ito_bias is None
 
@@ -367,7 +367,7 @@ def test_diffusion_binned_ito_correction_default_off():
 def test_diffusion_binned_ito_correction_on():
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=65)
     ag = u.select_atoms("all")
-    binned = TransverseDiffusivityBinned(
+    binned = LocalDiffusivityBinned(
         ag, dim=2, bins=10, ito_correction=True
     )
     binned.run()
@@ -379,9 +379,9 @@ def test_diffusion_binned_ito_correction_on():
 def test_diffusion_binned_ito_reduces_D_perp():
     u = _make_diffusion_universe(n_atoms=200, n_frames=20, Lz=60.0, seed=66)
     ag = u.select_atoms("all")
-    b_unc = TransverseDiffusivityBinned(ag, dim=2, bins=15)
+    b_unc = LocalDiffusivityBinned(ag, dim=2, bins=15)
     b_unc.run()
-    b_cor = TransverseDiffusivityBinned(ag, dim=2, bins=15, ito_correction=True)
+    b_cor = LocalDiffusivityBinned(ag, dim=2, bins=15, ito_correction=True)
     b_cor.run()
     assert np.all(b_cor.D_perp <= b_unc.D_perp + 1e-12)
 
@@ -389,9 +389,9 @@ def test_diffusion_binned_ito_reduces_D_perp():
 def test_diffusion_binned_ito_no_effect_on_D_para():
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=67)
     ag = u.select_atoms("all")
-    b_unc = TransverseDiffusivityBinned(ag, dim=2, bins=10)
+    b_unc = LocalDiffusivityBinned(ag, dim=2, bins=10)
     b_unc.run()
-    b_cor = TransverseDiffusivityBinned(ag, dim=2, bins=10, ito_correction=True)
+    b_cor = LocalDiffusivityBinned(ag, dim=2, bins=10, ito_correction=True)
     b_cor.run()
     assert np.allclose(b_cor.D_para, b_unc.D_para)
 
@@ -399,13 +399,13 @@ def test_diffusion_binned_ito_no_effect_on_D_para():
 def test_diffusion_binned_explicit_dt():
     u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=68)
     ag = u.select_atoms("all")
-    binned = TransverseDiffusivityBinned(ag, dim=2, bins=10, dt=2.0)
+    binned = LocalDiffusivityBinned(ag, dim=2, bins=10, dt=2.0)
     binned.run()
     assert binned.dt == pytest.approx(2.0)
 
 
 def test_binned_exposed_from_package():
     assert hasattr(qdiffusivity, "TransverseDensityBinned")
-    assert hasattr(qdiffusivity, "TransverseDiffusivityBinned")
+    assert hasattr(qdiffusivity, "LocalDiffusivityBinned")
     assert hasattr(qdiffusivity, "cic_assign")
     assert hasattr(qdiffusivity, "resolve_bins")

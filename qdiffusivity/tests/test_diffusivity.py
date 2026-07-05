@@ -5,7 +5,7 @@ import pytest
 
 import qdiffusivity
 from qdiffusivity.diffusivity import (
-    TransverseDiffusivityKDE,
+    LocalDiffusivityKDE,
     build_cdf,
     gaussian_kernel,
     kde_estimate,
@@ -233,7 +233,7 @@ def test_kde_estimate_kernels_match_at_wide_bandwidth():
 
 
 # ---------------------------------------------------------------------------
-# TransverseDiffusivityKDE AnalysisBase
+# LocalDiffusivityKDE AnalysisBase
 # ---------------------------------------------------------------------------
 
 
@@ -292,7 +292,7 @@ def _make_diffusion_universe(
 def test_diffusion_kde_runs_and_attrs():
     u = _make_diffusion_universe(n_atoms=100, n_frames=20, Lz=80.0, seed=20)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=50, bandwidth=0.1, kernel="gaussian"
     )
     kde.run()
@@ -320,7 +320,7 @@ def test_diffusion_kde_recovers_known_diffusivity():
         seed=21,
     )
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=60, bandwidth=0.08, kernel="gaussian"
     )
     kde.run()
@@ -336,7 +336,7 @@ def test_diffusion_kde_recovers_known_diffusivity():
 def test_diffusion_kde_auto_bandwidth():
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=22)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=40, bandwidth="auto", kernel="gaussian"
     )
     kde.run()
@@ -347,7 +347,7 @@ def test_diffusion_kde_auto_bandwidth():
 def test_diffusion_kde_epanechnikov_kernel():
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=23)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=40, bandwidth=0.1, kernel="epanechnikov"
     )
     kde.run()
@@ -358,24 +358,24 @@ def test_diffusion_kde_epanechnikov_kernel():
 def test_diffusion_kde_dim_validation():
     u = _make_diffusion_universe(n_atoms=10, n_frames=3, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDiffusivityKDE(u.select_atoms("all"), dim=5)
+        LocalDiffusivityKDE(u.select_atoms("all"), dim=5)
 
 
 def test_diffusion_kde_bandwidth_validation():
     u = _make_diffusion_universe(n_atoms=10, n_frames=3, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDiffusivityKDE(u.select_atoms("all"), bandwidth="bogus")
+        LocalDiffusivityKDE(u.select_atoms("all"), bandwidth="bogus")
 
 
 def test_diffusion_kde_kernel_validation():
     u = _make_diffusion_universe(n_atoms=10, n_frames=3, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDiffusivityKDE(u.select_atoms("all"), kernel="triangular")
+        LocalDiffusivityKDE(u.select_atoms("all"), kernel="triangular")
 
 
 def test_diffusion_kde_single_frame_raises():
     u = _make_diffusion_universe(n_atoms=10, n_frames=1, Lz=10.0)
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         u.select_atoms("all"), n_points=10, bandwidth=0.1
     )
     with pytest.raises(ValueError):
@@ -385,7 +385,7 @@ def test_diffusion_kde_single_frame_raises():
 def test_diffusion_kde_explicit_dt():
     u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=24)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=20, bandwidth=0.1, dt=2.0
     )
     kde.run()
@@ -393,7 +393,7 @@ def test_diffusion_kde_explicit_dt():
 
 
 def test_diffusion_kde_exposed_from_package():
-    assert hasattr(qdiffusivity, "TransverseDiffusivityKDE")
+    assert hasattr(qdiffusivity, "LocalDiffusivityKDE")
     assert hasattr(qdiffusivity, "build_cdf")
     assert hasattr(qdiffusivity, "gaussian_kernel")
     assert hasattr(qdiffusivity, "kde_estimate")
@@ -408,7 +408,7 @@ def test_diffusion_kde_exposed_from_package():
 def test_ito_correction_default_is_off():
     u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=30)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(ag, dim=2, n_points=20, bandwidth=0.1)
+    kde = LocalDiffusivityKDE(ag, dim=2, n_points=20, bandwidth=0.1)
     kde.run()
     assert kde.ito_bias is None
 
@@ -416,7 +416,7 @@ def test_ito_correction_default_is_off():
 def test_ito_correction_sets_attribute():
     u = _make_diffusion_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=31)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=20, bandwidth=0.1, ito_correction=True
     )
     kde.run()
@@ -431,9 +431,9 @@ def test_ito_correction_reduces_D_perp():
     # uncorrected D_perp (the bias is non-negative).
     u = _make_diffusion_universe(n_atoms=200, n_frames=20, Lz=60.0, seed=32)
     ag = u.select_atoms("all")
-    kde_unc = TransverseDiffusivityKDE(ag, dim=2, n_points=40, bandwidth=0.08)
+    kde_unc = LocalDiffusivityKDE(ag, dim=2, n_points=40, bandwidth=0.08)
     kde_unc.run()
-    kde_cor = TransverseDiffusivityKDE(
+    kde_cor = LocalDiffusivityKDE(
         ag, dim=2, n_points=40, bandwidth=0.08, ito_correction=True
     )
     kde_cor.run()
@@ -446,7 +446,7 @@ def test_ito_correction_uniform_density_zero_bias():
     # the uncorrected D_perp.
     u = _make_diffusion_universe(n_atoms=500, n_frames=20, Lz=60.0, seed=33)
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=40, bandwidth=0.1, ito_correction=True
     )
     kde.run()
@@ -461,9 +461,9 @@ def test_ito_correction_does_not_affect_D_para():
     # uncorrected D_para should be identical.
     u = _make_diffusion_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=34)
     ag = u.select_atoms("all")
-    kde_unc = TransverseDiffusivityKDE(ag, dim=2, n_points=30, bandwidth=0.1)
+    kde_unc = LocalDiffusivityKDE(ag, dim=2, n_points=30, bandwidth=0.1)
     kde_unc.run()
-    kde_cor = TransverseDiffusivityKDE(
+    kde_cor = LocalDiffusivityKDE(
         ag, dim=2, n_points=30, bandwidth=0.1, ito_correction=True
     )
     kde_cor.run()
@@ -483,7 +483,7 @@ def test_ito_correction_recovers_known_diffusivity():
         seed=35,
     )
     ag = u.select_atoms("all")
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag,
         dim=2,
         n_points=60,

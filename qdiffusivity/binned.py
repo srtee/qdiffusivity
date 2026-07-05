@@ -336,7 +336,7 @@ class TransverseDensityBinned(AnalysisBase):
             )
 
 
-class TransverseDiffusivityBinned(AnalysisBase):
+class LocalDiffusivityBinned(AnalysisBase):
     r"""CDF-binned transverse diffusivity estimator.
 
     Pools per-frame positions of ``atomgroup``, builds a CDF-uniformised
@@ -421,11 +421,11 @@ class TransverseDiffusivityBinned(AnalysisBase):
     ::
 
         import MDAnalysis as mda
-        from qdiffusivity import TransverseDiffusivityBinned
+        from qdiffusivity import LocalDiffusivityBinned
 
         u = mda.Universe("topology.data", "trajectory.xtc")
         ag = u.select_atoms("type 1 2")
-        binned = TransverseDiffusivityBinned(
+        binned = LocalDiffusivityBinned(
             ag, dim=2, bins=30, ito_correction=True,
         )
         binned.run()

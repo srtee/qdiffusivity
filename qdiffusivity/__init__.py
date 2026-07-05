@@ -8,8 +8,8 @@ simulations of nanoconfined liquids
 from importlib.metadata import version
 
 from .binned import (
+    LocalDiffusivityBinned,
     TransverseDensityBinned,
-    TransverseDiffusivityBinned,
     cic_assign,
     resolve_bins,
 )
@@ -22,7 +22,7 @@ from .density import (
     silverman_bw,
 )
 from .diffusivity import (
-    TransverseDiffusivityKDE,
+    LocalDiffusivityKDE,
     build_cdf,
     gaussian_kernel,
     kde_estimate,
@@ -34,8 +34,8 @@ __version__ = version("qdiffusivity")
 __all__ = [
     "TransverseDensityBinned",
     "TransverseDensityKDE",
-    "TransverseDiffusivityBinned",
-    "TransverseDiffusivityKDE",
+    "LocalDiffusivityBinned",
+    "LocalDiffusivityKDE",
     "build_cdf",
     "cic_assign",
     "epanechnikov_kernel",

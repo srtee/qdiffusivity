@@ -68,7 +68,7 @@ See the :doc:`api` for full reference.
 Diffusivity profiles with the KDE local estimator
 --------------------------------------------------
 
-The :class:`qdiffusivity.TransverseDiffusivityKDE` analysis class
+The :class:`qdiffusivity.LocalDiffusivityKDE` analysis class
 estimates the perpendicular (transverse) and parallel diffusivities as a
 function of position along the confined axis.  It works in
 *CDF-uniformised* u-space, where the equilibrium measure is uniform so a
@@ -83,12 +83,12 @@ starting position in u-space.  Kernel mass leaking beyond
 .. code-block:: python
 
     import MDAnalysis as mda
-    from qdiffusivity import TransverseDiffusivityKDE
+    from qdiffusivity import LocalDiffusivityKDE
 
     u = mda.Universe("topology.data", "trajectory.xtc")
     ag = u.select_atoms("type 1 2")  # water atoms
 
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag,
         dim=2,
         n_points=200,
@@ -123,7 +123,7 @@ explicitly, pass ``ito_correction=True``:
 
 .. code-block:: python
 
-    kde = TransverseDiffusivityKDE(
+    kde = LocalDiffusivityKDE(
         ag, dim=2, n_points=200, ito_correction=True,
     )
     kde.run()
@@ -156,7 +156,7 @@ The ``bins`` parameter accepts:
 
     from qdiffusivity import (
         TransverseDensityBinned,
-        TransverseDiffusivityBinned,
+        LocalDiffusivityBinned,
     )
 
     # Density profile, 30 quantile bins (CIC):
@@ -166,7 +166,7 @@ The ``bins`` parameter accepts:
     binned_dens.run()
 
     # Diffusivity profile, 20 bins, with Ito correction:
-    binned_diff = TransverseDiffusivityBinned(
+    binned_diff = LocalDiffusivityBinned(
         ag, dim=2, bins=20, ito_correction=True,
     )
     binned_diff.run()
