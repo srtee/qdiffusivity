@@ -208,8 +208,10 @@ def test_ito_correction(diff_universe, ito):
 def test_package_exports():
     """All public names are importable from qdiffusivity."""
     for name in (
-        "TransverseDensityQKDE",
-        "TransverseDensityQBinned",
+        "TransverseNumDensityQKDE",
+        "TransverseNumDensityQBinned",
+        "TransverseMassDensityQKDE",
+        "TransverseMassDensityQBinned",
         "LocalDiffusivityQKDE",
         "LocalDiffusivityQBinned",
         "build_cdf",

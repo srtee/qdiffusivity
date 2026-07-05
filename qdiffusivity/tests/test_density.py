@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from qdiffusivity.density import (
-    TransverseDensityQKDE,
+    TransverseMassDensityQKDE,
+    TransverseNumDensityQKDE,
     epanechnikov_kernel,
     kde_1d,
     select_bandwidth,
@@ -15,13 +16,13 @@ from qdiffusivity.density import (
 def test_epanechnikov_kernel():
     """Normalised, compact support, non-negative, peak at zero."""
     x = np.linspace(-3.0, 3.0, 200_001)
-    assert np.trapezoid(
-        epanechnikov_kernel(x, 1.0), x
-    ) == pytest.approx(1.0, abs=1e-4)
+    assert np.trapezoid(epanechnikov_kernel(x, 1.0), x) == pytest.approx(
+        1.0, abs=1e-4
+    )
     assert epanechnikov_kernel(np.array([1.6]), 1.5)[0] == 0.0
-    assert epanechnikov_kernel(
-        np.array([0.0]), 1.5
-    )[0] == pytest.approx(0.75 / 1.5)
+    assert epanechnikov_kernel(np.array([0.0]), 1.5)[0] == pytest.approx(
+        0.75 / 1.5
+    )
     assert np.all(epanechnikov_kernel(x, 2.0) >= 0.0)
 
 
@@ -49,7 +50,6 @@ def test_kde_1d():
     z_eval = np.linspace(20.0, 80.0, 2001)
     rho, n_eff = kde_1d(z, z_eval, 0.5, 0.0, 100.0)
     assert np.trapezoid(rho, z_eval) == pytest.approx(1.0, abs=0.02)
-    # ESS is positive in the well-sampled interior and bounded by N.
     interior = (z_eval > 40) & (z_eval < 60)
     assert np.all(n_eff[interior] > 0)
     assert np.all(n_eff <= z.size)
@@ -59,17 +59,21 @@ def test_kde_1d():
     assert np.all(rho_e == 0.0) and np.all(n_eff_e == 0.0)
 
 
+@pytest.mark.parametrize(
+    "cls", [TransverseNumDensityQKDE, TransverseMassDensityQKDE]
+)
 @pytest.mark.parametrize("grouping", ["atoms", "residues"])
-def test_density_qkde(density_universe, grouping):
-    """Run, attributes, normalisation, auto bandwidth, auto boundaries."""
+def test_density_qkde(density_universe, cls, grouping):
+    """Run, attributes, density positive, auto bandwidth."""
     n_atoms, n_res, n_frames = 200, 10, 5
     u = density_universe(
-        n_atoms=n_atoms, n_res=n_res,
-        n_frames=n_frames, Lz=100.0,
+        n_atoms=n_atoms,
+        n_res=n_res,
+        n_frames=n_frames,
+        Lz=100.0,
     )
-    ag = u.select_atoms("all")
-    kde = TransverseDensityQKDE(
-        ag,
+    kde = cls(
+        u.select_atoms("all"),
         dim=2,
         z_bot=0.0,
         z_top=100.0,
@@ -78,9 +82,8 @@ def test_density_qkde(density_universe, grouping):
         grouping=grouping,
     )
     kde.run()
-    assert kde.rho.shape == (80,)
-    assert np.all(kde.rho >= 0.0)
-    assert np.trapezoid(kde.rho, kde.z_eval) == pytest.approx(1.0, abs=0.05)
+    assert kde.density.shape == (80,)
+    assert np.all(kde.density >= 0.0)
     assert kde.n_frames_used == n_frames
     if grouping == "residues":
         expected_n = n_res * n_frames
@@ -90,9 +93,48 @@ def test_density_qkde(density_universe, grouping):
     assert np.isfinite(kde.bandwidth) and kde.bandwidth > 0
 
 
+def test_num_vs_mass_density_qkde(density_universe):
+    """Mass density = num density * mean mass / N_A * 1e24."""
+    n_atoms, n_frames = 200, 5
+    u = density_universe(
+        n_atoms=n_atoms,
+        n_res=n_atoms,
+        n_frames=n_frames,
+        Lz=100.0,
+    )
+    ag = u.select_atoms("all")
+    nd = TransverseNumDensityQKDE(
+        ag,
+        dim=2,
+        z_bot=0.0,
+        z_top=100.0,
+        n_points=80,
+        bandwidth=0.5,
+    )
+    nd.run()
+    md = TransverseMassDensityQKDE(
+        ag,
+        dim=2,
+        z_bot=0.0,
+        z_top=100.0,
+        n_points=80,
+        bandwidth=0.5,
+    )
+    md.run()
+    mean_mass = float(np.mean(ag.masses))
+    from MDAnalysis.units import constants
+
+    conv = constants["N_Avogadro"] * 1e-24
+    # rho is the same; density_num = rho * N/(n_frames*A)
+    # density_mass = rho * total_mass/(n_frames*A) / conv
+    ratio = md.density / nd.density
+    expected = mean_mass / conv
+    assert np.allclose(ratio[nd.density > 0], expected, rtol=0.01)
+
+
 def test_density_qkde_auto_boundaries(density_universe):
     u = density_universe(n_atoms=100, n_frames=2, Lz=40.0)
-    kde = TransverseDensityQKDE(
+    kde = TransverseNumDensityQKDE(
         u.select_atoms("all"), dim=2, n_points=40, bandwidth=0.3
     )
     kde.run()
@@ -101,23 +143,29 @@ def test_density_qkde_auto_boundaries(density_universe):
 
 
 @pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"dim": 5},
-        {"grouping": "molecules"},
-        {"bandwidth": "bogus"},
-    ],
+    "cls", [TransverseNumDensityQKDE, TransverseMassDensityQKDE]
 )
-def test_density_qkde_validation(density_universe, kwargs):
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"dim": 5}, {"grouping": "molecules"}, {"bandwidth": "bogus"}],
+)
+def test_density_qkde_validation(density_universe, cls, kwargs):
     u = density_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
     with pytest.raises(ValueError):
-        TransverseDensityQKDE(u.select_atoms("all"), **kwargs)
+        cls(u.select_atoms("all"), **kwargs)
 
 
-def test_density_qkde_inverted_boundaries(density_universe):
+@pytest.mark.parametrize(
+    "cls", [TransverseNumDensityQKDE, TransverseMassDensityQKDE]
+)
+def test_density_qkde_inverted_boundaries(density_universe, cls):
     u = density_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
-    kde = TransverseDensityQKDE(
-        u.select_atoms("all"), dim=2, z_bot=10.0, z_top=0.0, bandwidth=0.5
+    kde = cls(
+        u.select_atoms("all"),
+        dim=2,
+        z_bot=10.0,
+        z_top=0.0,
+        bandwidth=0.5,
     )
     with pytest.raises(ValueError):
         kde.run()

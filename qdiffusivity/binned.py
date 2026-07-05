@@ -32,6 +32,7 @@ import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
 from MDAnalysis.transformations import NoJump
 
+from .density import _AMU_PER_ANGSTROM3_TO_G_PER_CM3
 from .diffusivity import build_cdf
 
 
@@ -138,14 +139,10 @@ def _bin_centers_from_edges(edges):
     return 0.5 * (edges[:-1] + edges[1:])
 
 
-class TransverseDensityQBinned(AnalysisBase):
-    r"""CDF-binned transverse number-density profile.
+class _TransverseDensityQBinnedBase(AnalysisBase):
+    r"""Shared base for CDF-binned transverse density profiles.
 
-    Pools per-frame positions of ``atomgroup`` along ``dim`` (the
-    confined axis), builds a CDF-uniformised u-space, and assigns each
-    sample to u-space bins via cloud-in-cell (CIC) or hard assignment.
-    The bin population is converted to a number density via the
-    cross-sectional area and the number of analysis frames.
+    Subclasses set ``_mass_density`` to select number or mass density.
 
     Parameters
     ----------
@@ -175,15 +172,12 @@ class TransverseDensityQBinned(AnalysisBase):
     u_centers : numpy.ndarray
         ``(n_bins,)`` bin centres in u-space.
     density : numpy.ndarray
-        ``(n_bins,)`` number density (particles per volume), computed
-        as ``(N_total / (n_frames_used * A)) * (bin_population /
-        bin_width_in_u) * rho(z_center)`` — i.e. the CDF bin population
-        rescaled by the local Jacobian :math:`\rho = du/dz`.
+        ``(n_bins,)`` density profile.  For number density:
+        particles/Å³.  For mass density: g/cm³.
     n_per_bin : numpy.ndarray
         ``(n_bins,)`` raw (weighted) population per bin.
     n_eff : numpy.ndarray
-        ``(n_bins,)`` effective sample size (sum of CIC weights, or
-        integer count for hard assignment).
+        ``(n_bins,)`` effective sample size.
     bin_edges_u : numpy.ndarray
         ``(n_bins + 1,)`` u-space bin edges.
     n_total : int
@@ -194,28 +188,9 @@ class TransverseDensityQBinned(AnalysisBase):
         Mean number of samples per frame.
     P, P_inv, rho : callables
         CDF, inverse-CDF and equilibrium density closures.
-
-    Notes
-    -----
-    Confined-axis positions are wrapped into the primary box cell along
-    ``dim`` before pooling.  For ``grouping="residues"`` the
-    centre-of-mass is computed with the atoms' topology masses.
-
-    Examples
-    --------
-    ::
-
-        import MDAnalysis as mda
-        from qdiffusivity import TransverseDensityQBinned
-
-        u = mda.Universe("topology.data", "trajectory.xtc")
-        ag = u.select_atoms("type 1 2")
-        binned = TransverseDensityQBinned(
-            ag, dim=2, z_bot=10.0, z_top=90.0, bins=30,
-        )
-        binned.run()
-        # binned.density is in particles/Å^3.
     """
+
+    _mass_density = False
 
     def __init__(
         self,
@@ -242,13 +217,13 @@ class TransverseDensityQBinned(AnalysisBase):
         self._grouping = grouping
 
     def _prepare(self):
+        self._masses = self._ag.masses.astype(np.float64)
         if self._grouping == "residues":
             residx = self._ag.resindices
             self._res_unique, self._res_inv = np.unique(
                 residx, return_inverse=True
             )
             self._n_res = self._res_unique.size
-            self._masses = self._ag.masses.astype(np.float64)
             self._res_mass = np.zeros(self._n_res, dtype=np.float64)
             np.add.at(self._res_mass, self._res_inv, self._masses)
         self._u_frames = []
@@ -302,8 +277,6 @@ class TransverseDensityQBinned(AnalysisBase):
             np.add.at(pop, k1, w1)
             self.n_eff = pop.copy()
         else:
-            # Hard assignment via digitize.  Samples exactly on the
-            # upper edge (u == 1) are folded into the last bin.
             idx = np.clip(
                 np.digitize(u_samples, self._edges_u) - 1,
                 0,
@@ -314,26 +287,109 @@ class TransverseDensityQBinned(AnalysisBase):
 
         self.n_per_bin = pop
 
-        # Convert bin population to a number density.
-        #   n(z) = (N_total / (n_frames * A)) * rho(z)
-        # because in u-space the population per bin is ~N_total * du,
-        # and du = rho(z) * dz, so the z-space number density is
-        # (N_total / (n_frames * A)) * (pop / N_total) / dz
-        # = pop / (n_frames * A * dz), with dz = du / rho(z).
-        A = 1.0
+        # Cross-sectional area.
         dims = self._ag.universe.dimensions
-        if dims is not None:
-            para = [i for i in (0, 1, 2) if i != self._dim]
-            A = float(dims[para[0]] * dims[para[1]])
+        para = [i for i in (0, 1, 2) if i != self._dim]
+        A = float(dims[para[0]] * dims[para[1]])
+
         rho_centers = self.rho(self.z_centers)
         du = np.diff(self._edges_u)
         with np.errstate(divide="ignore", invalid="ignore"):
             dz = np.where(rho_centers > 0, du / rho_centers, 0.0)
-            self.density = np.where(
-                dz > 0,
-                pop / (self.n_frames_used * A * dz),
-                0.0,
-            )
+
+            if self._mass_density:
+                # Mass-weighted population: each sample's CIC/hard
+                # weight is multiplied by its mass.  For CIC we
+                # re-accumulate with mass weights; for hard assignment
+                # we use np.bincount with weights.
+                if self._use_cic:
+                    mass_per_sample = (
+                        np.tile(self._masses, self.n_frames_used)
+                        if self._grouping == "atoms"
+                        else np.repeat(self._res_mass, self.n_frames_used)
+                    )
+                    mass_pop = np.zeros(n_bins, dtype=np.float64)
+                    np.add.at(mass_pop, k0, w0 * mass_per_sample)
+                    np.add.at(mass_pop, k1, w1 * mass_per_sample)
+                else:
+                    mass_per_sample = (
+                        np.tile(self._masses, self.n_frames_used)
+                        if self._grouping == "atoms"
+                        else np.repeat(self._res_mass, self.n_frames_used)
+                    )
+                    mass_pop = np.bincount(
+                        idx,
+                        weights=mass_per_sample,
+                        minlength=n_bins,
+                    ).astype(np.float64)
+                # Mass density (amu/Å^3) -> g/cm^3.
+                self.density = np.where(
+                    dz > 0,
+                    mass_pop
+                    / (self.n_frames_used * A * dz)
+                    / _AMU_PER_ANGSTROM3_TO_G_PER_CM3,
+                    0.0,
+                )
+            else:
+                self.density = np.where(
+                    dz > 0,
+                    pop / (self.n_frames_used * A * dz),
+                    0.0,
+                )
+
+
+class TransverseNumDensityQBinned(_TransverseDensityQBinnedBase):
+    r"""CDF-binned transverse number-density profile.
+
+    Returns number density in particles/Å³.  See
+    :class:`_TransverseDensityQBinnedBase` for parameters and attributes.
+
+    Examples
+    --------
+    ::
+
+        import MDAnalysis as mda
+        from qdiffusivity import TransverseNumDensityQBinned
+
+        u = mda.Universe("topology.data", "trajectory.xtc")
+        ag = u.select_atoms("type 1 2")
+        binned = TransverseNumDensityQBinned(
+            ag, dim=2, z_bot=10.0, z_top=90.0, bins=30,
+        )
+        binned.run()
+        # binned.density is in particles/Å^3.
+    """
+
+    _mass_density = False
+
+
+class TransverseMassDensityQBinned(_TransverseDensityQBinnedBase):
+    r"""CDF-binned transverse mass-density profile.
+
+    Returns mass density in g/cm³ (matching MDAnalysis's
+    :class:`~MDAnalysis.analysis.lineardensity.LinearDensity`).  Each
+    sample is weighted by its topology mass (per atom for
+    ``grouping="atoms"``; per-residue total mass for
+    ``grouping="residues"``).  See
+    :class:`_TransverseDensityQBinnedBase` for parameters and attributes.
+
+    Examples
+    --------
+    ::
+
+        import MDAnalysis as mda
+        from qdiffusivity import TransverseMassDensityQBinned
+
+        u = mda.Universe("topology.data", "trajectory.xtc")
+        ag = u.select_atoms("type 1 2")
+        binned = TransverseMassDensityQBinned(
+            ag, dim=2, z_bot=10.0, z_top=90.0, bins=30,
+        )
+        binned.run()
+        # binned.density is in g/cm^3.
+    """
+
+    _mass_density = True
 
 
 class LocalDiffusivityQBinned(AnalysisBase):

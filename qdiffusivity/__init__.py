@@ -9,12 +9,14 @@ from importlib.metadata import version
 
 from .binned import (
     LocalDiffusivityQBinned,
-    TransverseDensityQBinned,
+    TransverseMassDensityQBinned,
+    TransverseNumDensityQBinned,
     cic_assign,
     resolve_bins,
 )
 from .density import (
-    TransverseDensityQKDE,
+    TransverseMassDensityQKDE,
+    TransverseNumDensityQKDE,
     epanechnikov_kernel,
     kde_1d,
     select_bandwidth,
@@ -32,10 +34,12 @@ from .diffusivity import (
 __version__ = version("qdiffusivity")
 
 __all__ = [
-    "TransverseDensityQBinned",
-    "TransverseDensityQKDE",
     "LocalDiffusivityQBinned",
     "LocalDiffusivityQKDE",
+    "TransverseMassDensityQBinned",
+    "TransverseMassDensityQKDE",
+    "TransverseNumDensityQBinned",
+    "TransverseNumDensityQKDE",
     "build_cdf",
     "cic_assign",
     "epanechnikov_kernel",

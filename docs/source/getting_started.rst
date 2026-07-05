@@ -8,7 +8,7 @@ built on MDAnalysis.
 Density profiles with the Epanechnikov KDE
 ------------------------------------------
 
-The :class:`qdiffusivity.TransverseDensityQKDE` analysis class pools
+The :class:`qdiffusivity.TransverseNumDensityQKDE` analysis class pools
 per-frame positions of an :class:`~MDAnalysis.core.groups.AtomGroup` along
 the confined axis and evaluates an Epanechnikov-kernel KDE on a uniform
 grid spanning the confined region.  Kernel mass that would leak beyond the
@@ -18,12 +18,12 @@ artefact-free at the walls.
 .. code-block:: python
 
     import MDAnalysis as mda
-    from qdiffusivity import TransverseDensityQKDE
+    from qdiffusivity import TransverseNumDensityQKDE
 
     u = mda.Universe("topology.data", "trajectory.xtc")
     ag = u.select_atoms("type 1 2")  # water atoms
 
-    kde = TransverseDensityQKDE(
+    kde = TransverseNumDensityQKDE(
         ag,
         dim=2,
         z_bot=10.0,
@@ -155,12 +155,12 @@ The ``bins`` parameter accepts:
 .. code-block:: python
 
     from qdiffusivity import (
-        TransverseDensityQBinned,
+        TransverseNumDensityQBinned,
         LocalDiffusivityQBinned,
     )
 
     # Density profile, 30 quantile bins (CIC):
-    binned_dens = TransverseDensityQBinned(
+    binned_dens = TransverseNumDensityQBinned(
         ag, dim=2, z_bot=10.0, z_top=90.0, bins="quantile",
     )
     binned_dens.run()

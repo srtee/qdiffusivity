@@ -1,10 +1,13 @@
-r"""Kernel density estimator for transverse number-density profiles.
+r"""Kernel density estimator for transverse density profiles.
 
 This module provides an Epanechnikov-kernel 1-D KDE with mirror-reflection
-boundary handling and a Sheather-Jones plug-in bandwidth, packaged as an
-:class:`~MDAnalysis.analysis.base.AnalysisBase` class so it can be applied
-to any :class:`~MDAnalysis.core.groups.AtomGroup` along the confined axis of
-a nanoconfined simulation.
+boundary handling and a Sheather-Jones plug-in bandwidth, packaged as
+:class:`~MDAnalysis.analysis.base.AnalysisBase` classes so it can be
+applied to any :class:`~MDAnalysis.core.groups.AtomGroup` along the
+confined axis of a nanoconfined simulation.  Both number-density and
+mass-density profiles are provided; the mass density follows
+MDAnalysis's :class:`~MDAnalysis.analysis.lineardensity.LinearDensity`
+convention of returning g/cm³.
 
 The reusable KDE machinery (bandwidth selection, kernel evaluation, boundary
 mirroring, Kish effective sample size) is generalised from the per-project
@@ -69,6 +72,7 @@ from __future__ import annotations
 
 import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
+from MDAnalysis.units import constants
 
 # Epanechnikov kernel constants used by the Sheather-Jones plug-in.
 #   ||K||^2 = int K(u)^2 du = 3/5
@@ -302,26 +306,28 @@ def kde_1d(z_data, z_eval, h, z_bot, z_top, *, chunk_size=50_000):
     return rho_hat, n_eff
 
 
-class TransverseDensityQKDE(AnalysisBase):
-    r"""Epanechnikov KDE transverse number-density profile.
+# Conversion factor from amu/Å^3 to g/cm^3, matching MDAnalysis's
+# LinearDensity:  N_Avogadro * 1e-24 (Å^3/cm^3).
+_AMU_PER_ANGSTROM3_TO_G_PER_CM3 = constants["N_Avogadro"] * 1e-24
 
-    Pools per-frame positions of ``atomgroup`` along ``dim`` (the confined
-    axis) across the analysis window and evaluates an Epanechnikov-kernel KDE
-    on a uniform grid spanning the confined region ``[z_bot, z_top]``.  Kernel
-    mass leaking beyond the boundaries is folded back by mirror reflection.
+
+class _TransverseDensityQKDEBase(AnalysisBase):
+    r"""Shared base for transverse density KDE profiles.
+
+    Subclasses set ``_mass_density`` to select number or mass density.
 
     Parameters
     ----------
     atomgroup : MDAnalysis.core.groups.AtomGroup
-        Atoms whose positions are sampled (or, with ``grouping="residues"``,
-        the atoms whose residue centre-of-mass positions are sampled).
+        Atoms whose positions are sampled (or, with
+        ``grouping="residues"``, the atoms whose residue centre-of-mass
+        positions are sampled).
     dim : int, optional
         Confined-axis index (0=x, 1=y, 2=z).  Default 2 (z).
     z_bot, z_top : float, optional
-        Boundaries of the confined region used for mirror reflection and the
-        evaluation grid.  If ``None`` they default to ``0`` and the box length
-        along ``dim`` (taken from the final analysis frame's
-        :attr:`~MDAnalysis.coordinates.timestep.Timestep.dimensions`).
+        Boundaries of the confined region used for mirror reflection and
+        the evaluation grid.  If ``None`` they default to ``0`` and the
+        box length along ``dim``.
     n_points : int, optional
         Number of evaluation grid points ``M``.  Default 400.
     bandwidth : {"auto", "silverman"} or float, optional
@@ -339,11 +345,9 @@ class TransverseDensityQKDE(AnalysisBase):
     ----------
     z_eval : numpy.ndarray
         ``(M,)`` evaluation grid (length).
-    rho : numpy.ndarray
-        ``(M,)`` normalised KDE density (1/length), integrating to ~1 over the
-        unbounded support.  Multiply by the mean per-frame 2-D number density
-        ``n_total / (n_frames_used * A)`` (where ``A`` is the cross-sectional
-        area) to obtain a number density in particles/volume.
+    density : numpy.ndarray
+        ``(M,)`` density profile.  For number density: particles/Å³.
+        For mass density: g/cm³.
     n_eff : numpy.ndarray
         ``(M,)`` Kish effective sample size at each grid point.
     bandwidth : float
@@ -353,34 +357,24 @@ class TransverseDensityQKDE(AnalysisBase):
     n_frames_used : int
         Number of analysis frames pooled.
     n_per_frame : float
-        Mean number of samples per frame (``n_total / n_frames_used``).
+        Mean number of samples per frame.
     z_pooled : numpy.ndarray
         ``(n_total,)`` pooled sample positions (handy for diagnostics).
 
     Notes
     -----
     Confined-axis positions are wrapped into the primary box cell along
-    ``dim`` before pooling, matching the behaviour of the original project
-    script.  For ``grouping="residues"`` the centre-of-mass is computed with
-    the atoms' topology masses; ensure masses are present in the topology for
-    a true centre-of-mass (they default to 1.0, giving the geometric
-    centroid).
+    ``dim`` before pooling.  For ``grouping="residues"`` the
+    centre-of-mass is computed with the atoms' topology masses.
 
-    Examples
-    --------
-    ::
-
-        import MDAnalysis as mda
-        from qdiffusivity import TransverseDensityQKDE
-
-        u = mda.Universe("topology.data", "trajectory.xtc")
-        ag = u.select_atoms("type 1 2")
-        kde = TransverseDensityQKDE(
-            ag, dim=2, z_bot=10.0, z_top=90.0, grouping="residues",
-        )
-        kde.run()
-        # number density (particles/Å^3): N_total / (n_frames * Lx * Ly) * rho
+    For mass density, each pooled sample is weighted by its mass (per
+    atom for ``grouping="atoms"``; per-residue total mass for
+    ``grouping="residues"``) and the result converted to g/cm³ via
+    :math:`N_{\mathrm{A}} \times 10^{-24}`, matching
+    :class:`~MDAnalysis.analysis.lineardensity.LinearDensity`.
     """
+
+    _mass_density = False
 
     def __init__(
         self,
@@ -408,23 +402,24 @@ class TransverseDensityQKDE(AnalysisBase):
             )
         self._grouping = grouping
         if isinstance(bandwidth, str) and bandwidth not in (
-            "auto", "silverman"
+            "auto",
+            "silverman",
         ):
             raise ValueError(
-                f"bandwidth must be 'auto', 'silverman' or a float, "
-                f"got {bandwidth!r}"
+                f"bandwidth must be 'auto', 'silverman' or "
+                f"a float, got {bandwidth!r}"
             )
         self._bandwidth = bandwidth
         self._chunk_size = int(chunk_size)
 
     def _prepare(self):
+        self._masses = self._ag.masses.astype(np.float64)
         if self._grouping == "residues":
             residx = self._ag.resindices
             self._res_unique, self._res_inv = np.unique(
                 residx, return_inverse=True
             )
             self._n_res = self._res_unique.size
-            self._masses = self._ag.masses.astype(np.float64)
             self._res_mass = np.zeros(self._n_res, dtype=np.float64)
             np.add.at(self._res_mass, self._res_inv, self._masses)
         self._z_frames = []
@@ -464,14 +459,15 @@ class TransverseDensityQKDE(AnalysisBase):
         z_top = L if self._z_top_user is None else float(self._z_top_user)
         if z_top <= z_bot:
             raise ValueError(
-                f"z_top ({z_top}) must be greater than z_bot ({z_bot})"
+                f"z_top ({z_top}) must be greater than "
+                f"z_bot ({z_bot})"
             )
 
         M = self._n_points
         self.z_eval = z_bot + (np.arange(M) + 0.5) * (z_top - z_bot) / M
 
         if z_pooled.size == 0:
-            self.rho = np.zeros(M, dtype=np.float64)
+            self.density = np.zeros(M, dtype=np.float64)
             self.n_eff = np.zeros(M, dtype=np.float64)
             self.bandwidth = float("nan")
             return
@@ -479,7 +475,7 @@ class TransverseDensityQKDE(AnalysisBase):
         self.bandwidth = select_bandwidth(
             z_pooled, z_bot, z_top, method=self._bandwidth
         )
-        self.rho, self.n_eff = kde_1d(
+        rho, self.n_eff = kde_1d(
             z_pooled,
             self.z_eval,
             self.bandwidth,
@@ -487,3 +483,80 @@ class TransverseDensityQKDE(AnalysisBase):
             z_top,
             chunk_size=self._chunk_size,
         )
+
+        # Cross-sectional area.
+        dims = self._ag.universe.dimensions
+        para = [i for i in (0, 1, 2) if i != self._dim]
+        A = float(dims[para[0]] * dims[para[1]])
+
+        if self._mass_density:
+            # Mass per pooled sample.
+            if self._grouping == "residues":
+                mass_per_sample = np.repeat(self._res_mass, self.n_frames_used)
+            else:
+                mass_per_sample = np.tile(self._masses, self.n_frames_used)
+            # Weighted KDE: multiply rho (1/length) by total mass / (n
+            # frames * A) and convert amu/Å^3 -> g/cm^3.
+            total_mass = float(mass_per_sample.sum())
+            self.density = (
+                rho
+                * (total_mass / (self.n_frames_used * A))
+                / _AMU_PER_ANGSTROM3_TO_G_PER_CM3
+            )
+        else:
+            # Number density: rho * n_total / (n_frames * A).
+            self.density = rho * (self.n_total / (self.n_frames_used * A))
+
+
+class TransverseNumDensityQKDE(_TransverseDensityQKDEBase):
+    r"""Epanechnikov KDE transverse number-density profile.
+
+    Returns number density in particles/Å³.  See
+    :class:`_TransverseDensityQKDEBase` for parameters and attributes.
+
+    Examples
+    --------
+    ::
+
+        import MDAnalysis as mda
+        from qdiffusivity import TransverseNumDensityQKDE
+
+        u = mda.Universe("topology.data", "trajectory.xtc")
+        ag = u.select_atoms("type 1 2")
+        kde = TransverseNumDensityQKDE(
+            ag, dim=2, z_bot=10.0, z_top=90.0, grouping="residues",
+        )
+        kde.run()
+        # kde.density is in particles/Å^3.
+    """
+
+    _mass_density = False
+
+
+class TransverseMassDensityQKDE(_TransverseDensityQKDEBase):
+    r"""Epanechnikov KDE transverse mass-density profile.
+
+    Returns mass density in g/cm³ (matching MDAnalysis's
+    :class:`~MDAnalysis.analysis.lineardensity.LinearDensity`).  Each
+    pooled sample is weighted by its topology mass (per atom for
+    ``grouping="atoms"``; per-residue total mass for
+    ``grouping="residues"``).  See :class:`_TransverseDensityQKDEBase`
+    for parameters and attributes.
+
+    Examples
+    --------
+    ::
+
+        import MDAnalysis as mda
+        from qdiffusivity import TransverseMassDensityQKDE
+
+        u = mda.Universe("topology.data", "trajectory.xtc")
+        ag = u.select_atoms("type 1 2")
+        kde = TransverseMassDensityQKDE(
+            ag, dim=2, z_bot=10.0, z_top=90.0, grouping="residues",
+        )
+        kde.run()
+        # kde.density is in g/cm^3.
+    """
+
+    _mass_density = True

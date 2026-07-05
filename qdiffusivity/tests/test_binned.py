@@ -5,7 +5,8 @@ import pytest
 
 from qdiffusivity.binned import (
     LocalDiffusivityQBinned,
-    TransverseDensityQBinned,
+    TransverseMassDensityQBinned,
+    TransverseNumDensityQBinned,
     cic_assign,
     resolve_bins,
 )
@@ -41,16 +42,12 @@ def test_cic_assign():
     k0, k1, w0, w1 = cic_assign(u, 20)
     assert np.allclose(w0 + w1, 1.0)
     assert np.all(k0 >= 0) and np.all(k0 < 20)
-    # Center of bin 10: u = 10.5/20 = 0.525.
     _, _, w0c, w1c = cic_assign(np.array([0.525]), 20)
     assert w0c[0] == pytest.approx(1.0) and w1c[0] == pytest.approx(0.0)
-    # Edge: u = 0.5 -> 50/50.
     _, _, w0e, w1e = cic_assign(np.array([0.5]), 20)
     assert w0e[0] == pytest.approx(0.5) and w1e[0] == pytest.approx(0.5)
-    # Mirror: u = 0.01 -> q = -0.3 -> reflected to 0.3 -> w0 = 0.7.
     k0m, _, w0m, _ = cic_assign(np.array([0.01]), 20)
     assert k0m[0] == 0 and w0m[0] == pytest.approx(0.7)
-    # Total population preserved.
     pop = np.zeros(20)
     np.add.at(pop, k0, w0)
     np.add.at(pop, k1, w1)
@@ -58,14 +55,18 @@ def test_cic_assign():
 
 
 @pytest.mark.parametrize(
+    "cls",
+    [TransverseNumDensityQBinned, TransverseMassDensityQBinned],
+)
+@pytest.mark.parametrize(
     "bins,expected_n",
     [(20, 20), ("quantile", 30), (np.array([0, 0.25, 0.5, 0.75, 1.0]), 4)],
 )
 @pytest.mark.parametrize("grouping", ["atoms", "residues"])
-def test_density_binned(density_universe, bins, expected_n, grouping):
+def test_density_binned(density_universe, cls, bins, expected_n, grouping):
     """Run, attributes, density positive, all bin specs, grouping."""
     u = density_universe(n_atoms=200, n_res=20, n_frames=5, Lz=100.0, seed=50)
-    binned = TransverseDensityQBinned(
+    binned = cls(
         u.select_atoms("all"),
         dim=2,
         z_bot=0.0,
@@ -80,10 +81,38 @@ def test_density_binned(density_universe, bins, expected_n, grouping):
     assert binned.n_frames_used == 5
 
 
+def test_num_vs_mass_density_binned(density_universe):
+    """Mass density = num density * mean mass / N_A * 1e24."""
+    u = density_universe(n_atoms=200, n_res=200, n_frames=5, Lz=100.0, seed=50)
+    ag = u.select_atoms("all")
+    nd = TransverseNumDensityQBinned(
+        ag,
+        dim=2,
+        z_bot=0.0,
+        z_top=100.0,
+        bins=20,
+    )
+    nd.run()
+    md = TransverseMassDensityQBinned(
+        ag,
+        dim=2,
+        z_bot=0.0,
+        z_top=100.0,
+        bins=20,
+    )
+    md.run()
+    mean_mass = float(np.mean(ag.masses))
+    from MDAnalysis.units import constants
+
+    conv = constants["N_Avogadro"] * 1e-24
+    ratio = md.density / nd.density
+    expected = mean_mass / conv
+    assert np.allclose(ratio[nd.density > 0], expected, rtol=0.01)
+
+
 @pytest.mark.parametrize(
     "bins,expected_n",
-    [(20, 20), ("quantile", 30),
-     (np.array([0.1, 0.3, 0.7, 0.9]), 5)]
+    [(20, 20), ("quantile", 30), (np.array([0.1, 0.3, 0.7, 0.9]), 5)],
 )
 def test_diffusivity_binned(diff_universe, bins, expected_n):
     """Run, attributes, known-D recovery, all bin specs."""
@@ -112,18 +141,21 @@ def test_diffusivity_binned(diff_universe, bins, expected_n):
 
 
 @pytest.mark.parametrize(
-    "cls,kwargs",
+    "cls,kwargs,use_diff",
     [
-        (TransverseDensityQBinned, {"dim": 5}),
-        (TransverseDensityQBinned, {"grouping": "molecules"}),
-        (LocalDiffusivityQBinned, {"dim": 5}),
+        (TransverseNumDensityQBinned, {"dim": 5}, False),
+        (TransverseNumDensityQBinned, {"grouping": "molecules"}, False),
+        (TransverseMassDensityQBinned, {"dim": 5}, False),
+        (LocalDiffusivityQBinned, {"dim": 5}, True),
     ],
 )
-def test_binned_validation(density_universe, diff_universe, cls, kwargs):
-    if cls is TransverseDensityQBinned:
-        u = density_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
-    else:
+def test_binned_validation(
+    density_universe, diff_universe, cls, kwargs, use_diff
+):
+    if use_diff:
         u = diff_universe(n_atoms=10, n_frames=3, Lz=10.0)
+    else:
+        u = density_universe(n_atoms=10, n_res=2, n_frames=1, Lz=10.0)
     with pytest.raises(ValueError):
         cls(u.select_atoms("all"), **kwargs)
 
