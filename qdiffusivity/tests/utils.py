@@ -1,8 +1,8 @@
 from typing import Tuple
 
 import MDAnalysis as mda
-from MDAnalysis.coordinates.memory import MemoryReader
 import numpy as np
+from MDAnalysis.coordinates.memory import MemoryReader
 
 
 def make_Universe(
