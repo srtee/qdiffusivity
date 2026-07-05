@@ -132,3 +132,46 @@ explicitly, pass ``ito_correction=True``:
 
 The parallel estimator has **zero** Itô bias (no parallel drift) and is
 unaffected by this option.
+
+Binned (histogram-style) profiles
+-----------------------------------
+
+For users who prefer histogram-style profiles over kernel smoothing,
+:mod:`qdiffusivity.binned` provides CDF-binned counterparts to the KDE
+classes.  Binning is always in u-space (CDF-uniformised), so bins are
+naturally finer where the particle density is high and every bin
+receives a comparable number of samples — the same equal-population
+strategy as the project's quantile scripts.
+
+The ``bins`` parameter accepts:
+
+- **int** — N uniform u-space bins with cloud-in-cell (CIC) assignment
+  (each sample is linearly split between the two nearest bin centres,
+  avoiding bin-edge discontinuities).
+- **"quantile"** — shortcut for 30 uniform u-space bins (CIC).
+- **array_like** — explicit u-space edges in ``[0, 1]`` with hard
+  assignment (standard histogram behaviour).
+
+.. code-block:: python
+
+    from qdiffusivity import (
+        TransverseDensityBinned,
+        TransverseDiffusivityBinned,
+    )
+
+    # Density profile, 30 quantile bins (CIC):
+    binned_dens = TransverseDensityBinned(
+        ag, dim=2, z_bot=10.0, z_top=90.0, bins="quantile",
+    )
+    binned_dens.run()
+
+    # Diffusivity profile, 20 bins, with Ito correction:
+    binned_diff = TransverseDiffusivityBinned(
+        ag, dim=2, bins=20, ito_correction=True,
+    )
+    binned_diff.run()
+
+Both classes are :class:`~MDAnalysis.analysis.base.AnalysisBase`
+subclasses, so the usual ``run(start, stop, step)`` interface applies.
+The diffusivity class supports the same ``ito_correction`` keyword as
+the KDE version.

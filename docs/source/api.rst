@@ -8,3 +8,4 @@ API Documentation
    qdiffusivity
    qdiffusivity.density
    qdiffusivity.diffusivity
+   qdiffusivity.binned

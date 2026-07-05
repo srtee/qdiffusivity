@@ -7,6 +7,12 @@ simulations of nanoconfined liquids
 # Add imports here
 from importlib.metadata import version
 
+from .binned import (
+    TransverseDensityBinned,
+    TransverseDiffusivityBinned,
+    cic_assign,
+    resolve_bins,
+)
 from .density import (
     TransverseDensityKDE,
     epanechnikov_kernel,
@@ -26,13 +32,17 @@ from .diffusivity import (
 __version__ = version("qdiffusivity")
 
 __all__ = [
+    "TransverseDensityBinned",
     "TransverseDensityKDE",
+    "TransverseDiffusivityBinned",
     "TransverseDiffusivityKDE",
     "build_cdf",
+    "cic_assign",
     "epanechnikov_kernel",
     "gaussian_kernel",
     "kde_1d",
     "kde_estimate",
+    "resolve_bins",
     "select_bandwidth",
     "select_diff_bandwidth",
     "sheather_jones_bw",
