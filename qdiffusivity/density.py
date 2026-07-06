@@ -507,6 +507,19 @@ class _TransverseDensityQKDEBase(AnalysisBase):
             # Number density: rho * n_total / (n_frames * A).
             self.density = rho * (self.n_total / (self.n_frames_used * A))
 
+        # Build the CDF closures so this result can be passed to the
+        # diffusivity classes via ``density_result=``.
+        from .diffusivity import build_cdf
+
+        (
+            self.P,
+            self.P_inv,
+            self.rho,
+            self.rho_prime,
+            _,
+            _,
+        ) = build_cdf(z_pooled)
+
 
 class TransverseNumDensityQKDE(_TransverseDensityQKDEBase):
     r"""Epanechnikov KDE transverse number-density profile.

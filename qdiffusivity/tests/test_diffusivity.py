@@ -89,7 +89,10 @@ def test_kde_estimate():
     # Kernels agree at wide bandwidth.
     d3 = rng.normal(1.0, 0.2, size=2000)
     Dg, _, _ = kde_estimate(
-        u2[:2000], d3, np.array([0.5]), h=2.0,
+        u2[:2000],
+        d3,
+        np.array([0.5]),
+        h=2.0,
         kernel="gaussian",
     )
     Dep, _, _ = kde_estimate(
@@ -127,12 +130,12 @@ def test_diffusivity_qkde(diff_universe, kernel):
     assert np.all(kde.D_perp >= 0)
     bulk = (kde.z_eval > 20) & (kde.z_eval < 40)
     valid = kde.n_eff_perp > 5
-    assert np.median(kde.D_perp[bulk & valid]) == pytest.approx(
-        D_perp_true, rel=0.3
-    )
-    assert np.median(kde.D_para[bulk & valid]) == pytest.approx(
-        D_para_true, rel=0.3
-    )
+    assert np.median(
+        kde.D_perp[bulk & valid]
+    ) == pytest.approx(D_perp_true, rel=0.3)
+    assert np.median(
+        kde.D_para[bulk & valid]
+    ) == pytest.approx(D_para_true, rel=0.3)
 
 
 @pytest.mark.parametrize(
@@ -147,7 +150,8 @@ def test_diffusivity_qkde_validation(diff_universe, kwargs):
 def test_diffusivity_qkde_single_frame_raises(diff_universe):
     u = diff_universe(n_atoms=10, n_frames=1, Lz=10.0)
     kde = LocalDiffusivityQKDE(
-        u.select_atoms("all"), n_points=10, bandwidth=0.1
+        u.select_atoms("all"),
+        n_points=10, bandwidth=0.1,
     )
     with pytest.raises(ValueError):
         kde.run()
@@ -200,9 +204,9 @@ def test_ito_correction(diff_universe, ito):
     kde2.run()
     bulk2 = (kde2.z_eval > 20) & (kde2.z_eval < 40)
     valid2 = kde2.n_eff_perp > 5
-    assert np.median(kde2.D_perp[bulk2 & valid2]) == pytest.approx(
-        0.05, rel=0.3
-    )
+    assert np.median(
+        kde2.D_perp[bulk2 & valid2]
+    ) == pytest.approx(0.05, rel=0.3)
 
 
 def test_package_exports():
@@ -227,3 +231,67 @@ def test_package_exports():
         "silverman_bw",
     ):
         assert hasattr(qdiffusivity, name)
+
+
+def test_density_result_autorun(diff_universe):
+    """Without density_result, the class auto-runs a density analysis
+    internally and produces a valid CDF."""
+    u = diff_universe(n_atoms=100, n_frames=10, Lz=50.0, seed=70)
+    kde = LocalDiffusivityQKDE(
+        u.select_atoms("all"),
+        dim=2,
+        n_points=30,
+        bandwidth=0.1,
+    )
+    kde.run()
+    assert hasattr(kde, "P") and callable(kde.P)
+    assert hasattr(kde, "P_inv") and callable(kde.P_inv)
+    assert hasattr(kde, "rho") and callable(kde.rho)
+    assert hasattr(kde, "rho_prime") and callable(kde.rho_prime)
+
+
+def test_density_result_precomputed(diff_universe):
+    """Passing a pre-computed density_result reuses its CDF and gives
+    the same D_perp/D_para as the auto-run path."""
+    u = diff_universe(
+        n_atoms=200,
+        n_frames=20,
+        Lz=60.0,
+        D_perp=0.05,
+        D_para=0.1,
+        seed=71,
+    )
+    ag = u.select_atoms("all")
+
+    # Pre-compute the density.
+    from qdiffusivity import TransverseNumDensityQKDE
+
+    dens = TransverseNumDensityQKDE(
+        ag,
+        dim=2,
+        n_points=60,
+    )
+    dens.run()
+    assert hasattr(dens, "P") and callable(dens.P)
+
+    # Pass it to the diffusivity class.
+    kde_pre = LocalDiffusivityQKDE(
+        ag,
+        dim=2,
+        n_points=60,
+        bandwidth=0.08,
+        density_result=dens,
+    )
+    kde_pre.run()
+
+    # Compare with the auto-run path.
+    kde_auto = LocalDiffusivityQKDE(
+        ag,
+        dim=2,
+        n_points=60,
+        bandwidth=0.08,
+    )
+    kde_auto.run()
+
+    assert np.allclose(kde_pre.D_perp, kde_auto.D_perp, rtol=1e-10)
+    assert np.allclose(kde_pre.D_para, kde_auto.D_para, rtol=1e-10)

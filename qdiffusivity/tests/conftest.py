@@ -28,8 +28,8 @@ def diff_universe():
     """Universe whose atoms perform independent Brownian walks.
 
     Atoms diffuse with prescribed D_perp (along z) and D_para (along
-    x/y) with dt=1.  z is wrapped to [0, Lz]; x/y are wrapped for the
-    topology (NoJump unwraps them during analysis).
+    x/y) with dt=1.      z is wrapped to [0, Lz]; x/y are wrapped for the
+    topology (minimum-image unwrapping is applied during analysis).
     """
 
     def _build(
@@ -66,8 +66,13 @@ def density_universe():
     """Universe with atoms random-walking in z (no drift, uniform density)."""
 
     def _build(
-        n_atoms=200, n_res=10, n_frames=5,
-        Lx=20.0, Ly=20.0, Lz=100.0, seed=0,
+        n_atoms=200,
+        n_res=10,
+        n_frames=5,
+        Lx=20.0,
+        Ly=20.0,
+        Lz=100.0,
+        seed=0,
     ):
         rng = np.random.default_rng(seed)
         pos = np.empty((n_frames, n_atoms, 3), dtype=np.float64)

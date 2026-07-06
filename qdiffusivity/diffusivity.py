@@ -83,7 +83,6 @@ from __future__ import annotations
 
 import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
-from MDAnalysis.transformations import NoJump
 
 from .density import epanechnikov_kernel
 
@@ -377,7 +376,11 @@ def build_cdf(z_pooled):
 
 
 def kde_estimate(
-    u_data, d_data, u_eval, h, kernel="gaussian",
+    u_data,
+    d_data,
+    u_eval,
+    h,
+    kernel="gaussian",
     chunk_size=50_000,
 ):
     r"""Kernel-weighted local estimator in u-space with mirror reflection.
@@ -474,7 +477,9 @@ def kde_estimate(
         var_d = np.maximum(var_d, 0.0)
         n_eff = np.where(w2_sum > 0, w_sum**2 / w2_sum, 0.0)
         D_std = np.where(
-            n_eff > 1, np.sqrt(var_d / np.maximum(n_eff, 1.0)), 0.0
+            n_eff > 1,
+            np.sqrt(var_d / np.maximum(n_eff, 1.0)),
+            0.0,
         )
     return D, D_std, n_eff
 
@@ -521,13 +526,24 @@ class LocalDiffusivityQKDE(AnalysisBase):
 
         from the perpendicular estimator, where :math:`\Phi = -\beta D V'
         = D\,\rho'/\rho` in the isothermal (Hänggi–Klimontovich)
-        convention.  The bias is computed from the uncorrected
-        :math:`D_\perp` and the equilibrium density :math:`\rho` (and its
-        derivative) produced by :func:`build_cdf`.  The parallel
-        estimator has **zero** Itô bias (no parallel drift) and is left
-        unchanged.  Default ``False`` (the bias is self-suppressing in
-        the electrode geometry — see the project notes — and within
-        the statistical error bars at typical frame spacings).
+    convention.  The bias is computed from the uncorrected
+    :math:`D_\perp` and the equilibrium density :math:`\rho` (and its
+    derivative) produced by :func:`build_cdf`.  The parallel
+    estimator has **zero** Itô bias (no parallel drift) and is left
+    unchanged.  Default ``False`` (the bias is self-suppressing in
+    the electrode geometry — see the project notes — and within
+    the statistical error bars at typical frame spacings).
+    density_result : TransverseNumDensityQKDE or None, optional
+        A pre-computed density result whose CDF closures
+        (:attr:`P`, :attr:`P_inv`, :attr:`rho`, :attr:`rho_prime`)
+        are reused for the u-space mapping.  If ``None`` (default),
+        a :class:`TransverseNumDensityQKDE` is run internally in
+        ``_prepare()`` to build the CDF automatically.  Passing a
+        pre-computed result enables a **two-pass parallelization**
+        strategy: run the density analysis first (parallelizable via
+        split-apply-combine), then pass its result to the diffusivity
+        analysis (each frame's u-mapping is then stateless and
+        parallelizable).
 
     Attributes
     ----------
@@ -571,11 +587,13 @@ class LocalDiffusivityQKDE(AnalysisBase):
 
     Notes
     -----
-    Parallel (x/y) positions are unwrapped with MDAnalysis's ``NoJump``
-    transformation so that multi-frame displacements across periodic
-    boundaries are captured.  The transformation is attached in place
-    (guarded so it is only attached once per Universe) and the full
-    trajectory is iterated from frame 0 (``NoJump`` is stateful).
+    Multi-frame displacements across periodic boundaries are computed
+    with the **minimum-image convention** applied directly to the
+    stored wrapped positions.  This is a stateless, frame-local
+    operation — only consecutive-frame positions are needed — so the
+    estimator is compatible with split-apply-combine parallelization
+    (each worker block can be processed independently without missing
+    prior image corrections).
 
     Examples
     --------
@@ -603,6 +621,7 @@ class LocalDiffusivityQKDE(AnalysisBase):
         kernel: str = "gaussian",
         dt=None,
         ito_correction: bool = False,
+        density_result=None,
         chunk_size: int = 50_000,
     ):
         super().__init__(atomgroup.universe.trajectory)
@@ -627,22 +646,49 @@ class LocalDiffusivityQKDE(AnalysisBase):
         self._kernel = kernel
         self._dt = dt
         self._ito_correction = bool(ito_correction)
+        self._density_result = density_result
         self._chunk_size = int(chunk_size)
 
     def _prepare(self):
+        # Extract or auto-compute the CDF closures (P, P_inv, rho,
+        # rho_prime).  If a density_result is provided, reuse its CDF;
+        # otherwise run a TransverseNumDensityQKDE internally.
+        if self._density_result is not None:
+            dr = self._density_result
+            self.P = dr.P
+            self.P_inv = dr.P_inv
+            self.rho = dr.rho
+            self.rho_prime = dr.rho_prime
+        else:
+            from .density import TransverseNumDensityQKDE
+
+            dens = TransverseNumDensityQKDE(
+                self._ag,
+                dim=self._dim,
+                n_points=self._n_points,
+            )
+            dens.run()
+            self.P = dens.P
+            self.P_inv = dens.P_inv
+            self.rho = dens.rho
+            self.rho_prime = dens.rho_prime
         self._pos_frames = []
 
     def _single_frame(self):
-        # Snapshot the positions so later NoJump unwrapping does not
-        # mutate the stored array.  We store the wrapped positions here
-        # and unwrap lazily in _conclude via NoJump.
+        # Snapshot the wrapped positions.  Displacements across periodic
+        # boundaries are recovered in _conclude via the minimum-image
+        # convention (stateless, parallelization-friendly).  The CDF
+        # is already available from _prepare, so the u-space mapping
+        # could be done here too — but we defer it to _conclude to keep
+        # _single_frame lightweight.
         self._pos_frames.append(self._ag.positions.copy())
 
     def _conclude(self):
         pos = np.asarray(self._pos_frames, dtype=np.float64)
-        # (n_frames, n_atoms, 3) — these are wrapped; we need unwrapped
-        # parallel coords and wrapped confined coord.  Re-iterate with
-        # NoJump to unwrap x/y, keeping z wrapped.
+        # (n_frames, n_atoms, 3) — wrapped positions.  Displacements
+        # across periodic boundaries are recovered with the minimum
+        # -image convention (stateless), avoiding a second trajectory
+        # iteration and the stateful NoJump transformation.
         n_frames = pos.shape[0]
         self.n_frames_used = n_frames
         if n_frames < 2:
@@ -656,31 +702,31 @@ class LocalDiffusivityQKDE(AnalysisBase):
         if dt <= 0:
             raise ValueError(f"dt must be positive, got {dt}")
 
-        # Unwrap the parallel coordinates via NoJump.  We attach the
-        # transformation to the universe's trajectory (guarded so it is
-        # only attached once) and re-iterate from frame 0.
-        u = self._ag.universe
-        if not getattr(u, "_qdiff_nojump_applied", False):
-            u.trajectory[0]
-            u.trajectory.add_transformations(NoJump(self._ag))
-            u._qdiff_nojump_applied = True
+        # Box lengths from the last analysed frame (constant-box / NVT
+        # assumption, as the original code used).  Minimum-image
+        # correction is applied to the *displacement* of consecutive
+        # frames, not to the absolute positions.
+        box = self._ts.dimensions
+        Lz = float(box[self._dim])
+        Lpara = {d: float(box[d]) for d in self._para_dims}
 
-        pos_unwrapped = np.empty_like(pos)
-        Lz = None
-        k = 0
-        for idx in range(0, u.trajectory.n_frames):
-            u.trajectory[idx]
-            if k >= n_frames:
-                break
-            pos_unwrapped[k] = self._ag.positions
-            Lz = u.dimensions[self._dim]
-            k += 1
-        if Lz is not None and Lz > 0:
-            pos_unwrapped[:, :, self._dim] %= Lz
+        # Wrap the confined coordinate into [0, Lz] for CDF
+        # construction (correct for the equilibrium density).
+        if Lz > 0:
+            pos[:, :, self._dim] %= Lz
 
-        # Pass 1: build CDF from pooled wrapped-z.
-        z_pooled = pos_unwrapped[:, :, self._dim].ravel()
-        self.P, self.P_inv, self.rho, self.rho_prime, _, _ = build_cdf(z_pooled)
+        # Pass 1: build CDF from pooled wrapped-z — unless a
+        # pre-computed CDF was supplied (or auto-run in _prepare).
+        if self._density_result is None:
+            z_pooled = pos[:, :, self._dim].ravel()
+            (
+                self.P,
+                self.P_inv,
+                self.rho,
+                self.rho_prime,
+                _,
+                _,
+            ) = build_cdf(z_pooled)
 
         # Evaluation grid: uniform in u-space, mapped back to z.
         M = self._n_points
@@ -688,7 +734,7 @@ class LocalDiffusivityQKDE(AnalysisBase):
         self.z_eval = self.P_inv(self.u_eval)
 
         # u-positions of all increments (starting frame of each pair).
-        z_start = pos_unwrapped[:-1, :, self._dim]  # (n_frames-1, n_atoms)
+        z_start = pos[:-1, :, self._dim]  # (n_frames-1, n_atoms)
         u_start = self.P(z_start.ravel())
 
         # Bandwidth from the u-positions of all increments.
@@ -697,8 +743,11 @@ class LocalDiffusivityQKDE(AnalysisBase):
         )
 
         # Perpendicular: z-space local estimator (Δz)²/(2Δt), kernel
-        # weighting in u-space.  No ρ⁻² conversion.
-        dz = np.diff(pos_unwrapped[:, :, self._dim], axis=0)
+        # weighting in u-space.  No ρ⁻² conversion.  Minimum-image
+        # correction on the wrapped-z displacement.
+        dz = np.diff(pos[:, :, self._dim], axis=0)
+        if Lz > 0:
+            dz -= np.rint(dz / Lz) * Lz
         d_perp_local = (dz**2) / (2.0 * dt)
         self.n_increments = int(d_perp_local.size)
 
@@ -734,9 +783,13 @@ class LocalDiffusivityQKDE(AnalysisBase):
 
         # Parallel: Δx² + Δy², only z_start mapped to u.  Parallel
         # displacement is not rescaled (parallel motion unbounded).
+        # Minimum-image correction on each parallel displacement.
         d_para_acc = np.zeros_like(dz)
         for d in self._para_dims:
-            diff_d = np.diff(pos_unwrapped[:, :, d], axis=0)
+            diff_d = np.diff(pos[:, :, d], axis=0)
+            Ld = Lpara[d]
+            if Ld > 0:
+                diff_d -= np.rint(diff_d / Ld) * Ld
             d_para_acc += diff_d**2
         d_para_local = d_para_acc / (4.0 * dt)
 

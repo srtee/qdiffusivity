@@ -175,3 +175,31 @@ Both classes are :class:`~MDAnalysis.analysis.base.AnalysisBase`
 subclasses, so the usual ``run(start, stop, step)`` interface applies.
 The diffusivity class supports the same ``ito_correction`` keyword as
 the KDE version.
+
+Two-pass parallelization
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The diffusivity classes accept a ``density_result`` keyword — a
+pre-computed :class:`~qdiffusivity.TransverseNumDensityQKDE` (or
+``TransverseNumDensityQBinned``) whose CDF closures are reused for the
+u-space mapping.  If ``None`` (default), a density analysis is run
+internally.  Passing a pre-computed result enables a **two-pass
+parallelization** strategy:
+
+.. code-block:: python
+
+    # Pass 1: density profile (parallelizable via split-apply-combine).
+    dens = TransverseNumDensityQKDE(ag, dim=2, n_points=200)
+    dens.run()
+
+    # Pass 2: diffusivity using the pre-computed CDF.
+    # Each frame's u-mapping is stateless, so this pass is also
+    # parallelizable (the minimum-image convention replaces NoJump).
+    kde = LocalDiffusivityQKDE(
+        ag, dim=2, n_points=200, density_result=dens,
+    )
+    kde.run()
+
+All displacements across periodic boundaries use the **minimum-image
+convention** (stateless, frame-local), not the stateful ``NoJump``
+transformation, so each frame can be processed independently.

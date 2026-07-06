@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
-from MDAnalysis.transformations import NoJump
 
 from .density import _AMU_PER_ANGSTROM3_TO_G_PER_CM3
 from .diffusivity import build_cdf
@@ -257,7 +256,14 @@ class _TransverseDensityQBinnedBase(AnalysisBase):
             self.n_total / self.n_frames_used if self.n_frames_used > 0 else 0.0
         )
 
-        self.P, self.P_inv, self.rho, _, _, _ = build_cdf(z_frames)
+        (
+            self.P,
+            self.P_inv,
+            self.rho,
+            self.rho_prime,
+            _,
+            _,
+        ) = build_cdf(z_frames)
         self.u_centers = _bin_centers_from_edges(self._edges_u)
         self.z_centers = self.P_inv(self.u_centers)
         n_bins = self._n_bins
@@ -429,6 +435,17 @@ class LocalDiffusivityQBinned(AnalysisBase):
         :math:`\frac{\Delta t}{2}\Phi(z)^2` (with
         :math:`\Phi = D\,\rho'/\rho` in the isothermal convention) from
         the perpendicular estimator.  Default ``False``.
+    density_result : TransverseNumDensityQKDE or None, optional
+        A pre-computed density result whose CDF closures
+        (:attr:`P`, :attr:`P_inv`, :attr:`rho`, :attr:`rho_prime`)
+        are reused for the u-space mapping.  If ``None`` (default),
+        a :class:`TransverseNumDensityQKDE` is run internally in
+        ``_prepare()`` to build the CDF automatically.  Passing a
+        pre-computed result enables a **two-pass parallelization**
+        strategy: run the density analysis first (parallelizable via
+        split-apply-combine), then pass its result to the diffusivity
+        analysis (each frame's u-mapping is then stateless and
+        parallelizable).
 
     Attributes
     ----------
@@ -463,14 +480,18 @@ class LocalDiffusivityQBinned(AnalysisBase):
         Time step used in the estimator.
     P, P_inv, rho : callables
         CDF, inverse-CDF and equilibrium density closures.
+    rho_prime : callable
+        Spatial derivative of the equilibrium density.
 
     Notes
     -----
-    Parallel (x/y) positions are unwrapped with MDAnalysis's ``NoJump``
-    transformation so that multi-frame displacements across periodic
-    boundaries are captured.  The transformation is attached in place
-    (guarded so it is only attached once per Universe) and the full
-    trajectory is iterated from frame 0 (``NoJump`` is stateful).
+    Multi-frame displacements across periodic boundaries are computed
+    with the **minimum-image convention** applied directly to the
+    stored wrapped positions.  This is a stateless, frame-local
+    operation — only consecutive-frame positions are needed — so the
+    estimator is compatible with split-apply-combine parallelization
+    (each worker block can be processed independently without missing
+    prior image corrections).
 
     Examples
     --------
@@ -495,6 +516,7 @@ class LocalDiffusivityQBinned(AnalysisBase):
         bins=30,
         dt=None,
         ito_correction: bool = False,
+        density_result=None,
     ):
         super().__init__(atomgroup.universe.trajectory)
         self._ag = atomgroup
@@ -505,8 +527,26 @@ class LocalDiffusivityQBinned(AnalysisBase):
         self._n_bins, self._edges_u, self._use_cic = resolve_bins(bins)
         self._dt = dt
         self._ito_correction = bool(ito_correction)
+        self._density_result = density_result
 
     def _prepare(self):
+        if self._density_result is not None:
+            dr = self._density_result
+            self.P = dr.P
+            self.P_inv = dr.P_inv
+            self.rho = dr.rho
+            self.rho_prime = dr.rho_prime
+        else:
+            dens = TransverseNumDensityQBinned(
+                self._ag,
+                dim=self._dim,
+                bins=self._n_bins,
+            )
+            dens.run()
+            self.P = dens.P
+            self.P_inv = dens.P_inv
+            self.rho = dens.rho
+            self.rho_prime = dens.rho_prime
         self._pos_frames = []
 
     def _single_frame(self):
@@ -526,40 +566,44 @@ class LocalDiffusivityQBinned(AnalysisBase):
         if dt <= 0:
             raise ValueError(f"dt must be positive, got {dt}")
 
-        # Unwrap parallel coordinates via NoJump.
-        u = self._ag.universe
-        if not getattr(u, "_qdiff_nojump_applied", False):
-            u.trajectory[0]
-            u.trajectory.add_transformations(NoJump(self._ag))
-            u._qdiff_nojump_applied = True
+        # Box lengths from the last analysed frame (constant-box / NVT
+        # assumption).  Minimum-image correction is applied to the
+        # *displacement* of consecutive frames, not to the absolute
+        # positions — stateless and parallelization-friendly.
+        box = self._ts.dimensions
+        Lz = float(box[self._dim])
+        Lpara = {d: float(box[d]) for d in self._para_dims}
 
-        pos_unwrapped = np.empty_like(pos)
-        Lz = None
-        k = 0
-        for idx in range(0, u.trajectory.n_frames):
-            u.trajectory[idx]
-            if k >= n_frames:
-                break
-            pos_unwrapped[k] = self._ag.positions
-            Lz = u.dimensions[self._dim]
-            k += 1
-        if Lz is not None and Lz > 0:
-            pos_unwrapped[:, :, self._dim] %= Lz
+        # Wrap the confined coordinate into [0, Lz] for CDF construction.
+        if Lz > 0:
+            pos[:, :, self._dim] %= Lz
 
-        # Build CDF from pooled wrapped-z.
-        z_pooled = pos_unwrapped[:, :, self._dim].ravel()
-        self.P, self.P_inv, self.rho, self.rho_prime, _, _ = build_cdf(z_pooled)
+        # Build CDF from pooled wrapped-z — unless a pre-computed
+        # CDF was supplied (or auto-run in _prepare).
+        if self._density_result is None:
+            z_pooled = pos[:, :, self._dim].ravel()
+            (
+                self.P,
+                self.P_inv,
+                self.rho,
+                self.rho_prime,
+                _,
+                _,
+            ) = build_cdf(z_pooled)
 
         self.u_centers = _bin_centers_from_edges(self._edges_u)
         self.z_centers = self.P_inv(self.u_centers)
         n_bins = self._n_bins
 
         # u-positions of all increments (starting frame of each pair).
-        z_start = pos_unwrapped[:-1, :, self._dim]
+        z_start = pos[:-1, :, self._dim]
         u_start = self.P(z_start.ravel())
 
         # Perpendicular: z-space local estimator (Δz)²/(2Δt).
-        dz = np.diff(pos_unwrapped[:, :, self._dim], axis=0)
+        # Minimum-image correction on the wrapped-z displacement.
+        dz = np.diff(pos[:, :, self._dim], axis=0)
+        if Lz > 0:
+            dz -= np.rint(dz / Lz) * Lz
         d_perp_local = (dz**2) / (2.0 * dt)
         self.n_increments = int(d_perp_local.size)
 
@@ -588,10 +632,14 @@ class LocalDiffusivityQBinned(AnalysisBase):
 
         self.D_perp = np.clip(self.D_perp, 0, None)
 
-        # Parallel: Δx² + Δy², only z_start mapped to u.
+        # Parallel: Δx² + Δy², only z_start mapped to u.  Minimum-image
+        # correction on each parallel displacement.
         d_para_acc = np.zeros_like(dz)
         for d in self._para_dims:
-            diff_d = np.diff(pos_unwrapped[:, :, d], axis=0)
+            diff_d = np.diff(pos[:, :, d], axis=0)
+            Ld = Lpara[d]
+            if Ld > 0:
+                diff_d -= np.rint(diff_d / Ld) * Ld
             d_para_acc += diff_d**2
         d_para_local = d_para_acc / (4.0 * dt)
 

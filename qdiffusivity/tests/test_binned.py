@@ -132,12 +132,12 @@ def test_diffusivity_binned(diff_universe, bins, expected_n):
     assert binned.dt == pytest.approx(1.0)
     bulk = (binned.z_centers > 20) & (binned.z_centers < 40)
     valid = binned.n_eff_perp > 5
-    assert np.median(binned.D_perp[bulk & valid]) == pytest.approx(
-        D_perp_true, rel=0.3
-    )
-    assert np.median(binned.D_para[bulk & valid]) == pytest.approx(
-        D_para_true, rel=0.3
-    )
+    assert np.median(
+        binned.D_perp[bulk & valid]
+    ) == pytest.approx(D_perp_true, rel=0.3)
+    assert np.median(
+        binned.D_para[bulk & valid]
+    ) == pytest.approx(D_para_true, rel=0.3)
 
 
 @pytest.mark.parametrize(
@@ -170,7 +170,8 @@ def test_diffusivity_binned_single_frame_raises(diff_universe):
 def test_diffusivity_binned_explicit_dt(diff_universe):
     u = diff_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=68)
     binned = LocalDiffusivityQBinned(
-        u.select_atoms("all"), dim=2, bins=10, dt=2.0
+        u.select_atoms("all"),
+        dim=2, bins=10, dt=2.0,
     )
     binned.run()
     assert binned.dt == pytest.approx(2.0)
@@ -182,7 +183,9 @@ def test_diffusivity_binned_ito(diff_universe, ito):
     on D_para."""
     u = diff_universe(n_atoms=200, n_frames=20, Lz=60.0, seed=66)
     ag = u.select_atoms("all")
-    binned = LocalDiffusivityQBinned(ag, dim=2, bins=15, ito_correction=ito)
+    binned = LocalDiffusivityQBinned(
+        ag, dim=2, bins=15, ito_correction=ito
+    )
     binned.run()
     if not ito:
         assert binned.ito_bias is None
@@ -193,3 +196,42 @@ def test_diffusivity_binned_ito(diff_universe, ito):
     b_unc.run()
     assert np.all(binned.D_perp <= b_unc.D_perp + 1e-12)
     assert np.allclose(binned.D_para, b_unc.D_para)
+
+
+def test_diffusivity_binned_density_result(diff_universe):
+    """Passing a pre-computed density_result gives the same D as
+    the auto-run path."""
+    u = diff_universe(
+        n_atoms=200,
+        n_frames=20,
+        Lz=60.0,
+        D_perp=0.05,
+        D_para=0.1,
+        seed=72,
+    )
+    ag = u.select_atoms("all")
+
+    dens = TransverseNumDensityQBinned(
+        ag,
+        dim=2,
+        bins=20,
+    )
+    dens.run()
+    assert hasattr(dens, "P") and callable(dens.P)
+    assert hasattr(dens, "rho_prime") and callable(dens.rho_prime)
+
+    b_pre = LocalDiffusivityQBinned(
+        ag,
+        dim=2,
+        bins=20,
+        density_result=dens,
+    )
+    b_pre.run()
+    b_auto = LocalDiffusivityQBinned(
+        ag,
+        dim=2,
+        bins=20,
+    )
+    b_auto.run()
+    assert np.allclose(b_pre.D_perp, b_auto.D_perp, rtol=1e-10)
+    assert np.allclose(b_pre.D_para, b_auto.D_para, rtol=1e-10)
