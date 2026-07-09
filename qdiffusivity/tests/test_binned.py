@@ -11,6 +11,8 @@ from qdiffusivity.binned import (
     resolve_bins,
 )
 
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 def test_resolve_bins():
     """int, 'quantile', explicit edges (padded/full), and invalid specs."""
@@ -132,12 +134,8 @@ def test_diffusivity_binned(diff_universe, bins, expected_n):
     assert binned.dt == pytest.approx(1.0)
     bulk = (binned.z_centers > 20) & (binned.z_centers < 40)
     valid = binned.n_eff_perp > 5
-    assert np.median(
-        binned.D_perp[bulk & valid]
-    ) == pytest.approx(D_perp_true, rel=0.3)
-    assert np.median(
-        binned.D_para[bulk & valid]
-    ) == pytest.approx(D_para_true, rel=0.3)
+    assert np.median(binned.D_perp[bulk & valid]) == pytest.approx(D_perp_true, rel=0.3)
+    assert np.median(binned.D_para[bulk & valid]) == pytest.approx(D_para_true, rel=0.3)
 
 
 @pytest.mark.parametrize(
@@ -149,9 +147,7 @@ def test_diffusivity_binned(diff_universe, bins, expected_n):
         (LocalDiffusivityQBinned, {"dim": 5}, True),
     ],
 )
-def test_binned_validation(
-    density_universe, diff_universe, cls, kwargs, use_diff
-):
+def test_binned_validation(density_universe, diff_universe, cls, kwargs, use_diff):
     if use_diff:
         u = diff_universe(n_atoms=10, n_frames=3, Lz=10.0)
     else:
@@ -171,7 +167,9 @@ def test_diffusivity_binned_explicit_dt(diff_universe):
     u = diff_universe(n_atoms=50, n_frames=5, Lz=40.0, seed=68)
     binned = LocalDiffusivityQBinned(
         u.select_atoms("all"),
-        dim=2, bins=10, dt=2.0,
+        dim=2,
+        bins=10,
+        dt=2.0,
     )
     binned.run()
     assert binned.dt == pytest.approx(2.0)
@@ -183,9 +181,7 @@ def test_diffusivity_binned_ito(diff_universe, ito):
     on D_para."""
     u = diff_universe(n_atoms=200, n_frames=20, Lz=60.0, seed=66)
     ag = u.select_atoms("all")
-    binned = LocalDiffusivityQBinned(
-        ag, dim=2, bins=15, ito_correction=ito
-    )
+    binned = LocalDiffusivityQBinned(ag, dim=2, bins=15, ito_correction=ito)
     binned.run()
     if not ito:
         assert binned.ito_bias is None

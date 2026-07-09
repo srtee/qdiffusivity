@@ -12,13 +12,13 @@ from qdiffusivity.diffusivity import (
     select_diff_bandwidth,
 )
 
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 def test_gaussian_kernel():
     """Normalised, symmetric, peak at zero."""
     x = np.linspace(-10.0, 10.0, 200_001)
-    assert np.trapezoid(
-        gaussian_kernel(x, 1.0), x
-    ) == pytest.approx(1.0, abs=1e-4)
+    assert _trapezoid(gaussian_kernel(x, 1.0), x) == pytest.approx(1.0, abs=1e-4)
     k = gaussian_kernel(np.array([-3, -1, 0, 1, 3.0]), 1.5)
     assert k[0] == pytest.approx(k[-1])
     assert k[2] > k[1] > k[0]
@@ -56,7 +56,7 @@ def test_build_cdf():
     assert np.allclose(z_back, z_grid, atol=0.1)
     rho_vals = rho(z_grid)
     assert np.all(rho_vals >= 0)
-    assert np.trapezoid(rho_vals, z_grid) == pytest.approx(1.0, abs=0.1)
+    assert _trapezoid(rho_vals, z_grid) == pytest.approx(1.0, abs=0.1)
     rho_p = rho_prime(np.array([45.0, 50.0, 55.0]))
     assert rho_p[0] > 0 and rho_p[2] < 0
     assert rho_p[1] == pytest.approx(0.0, abs=2e-3)
@@ -130,12 +130,8 @@ def test_diffusivity_qkde(diff_universe, kernel):
     assert np.all(kde.D_perp >= 0)
     bulk = (kde.z_eval > 20) & (kde.z_eval < 40)
     valid = kde.n_eff_perp > 5
-    assert np.median(
-        kde.D_perp[bulk & valid]
-    ) == pytest.approx(D_perp_true, rel=0.3)
-    assert np.median(
-        kde.D_para[bulk & valid]
-    ) == pytest.approx(D_para_true, rel=0.3)
+    assert np.median(kde.D_perp[bulk & valid]) == pytest.approx(D_perp_true, rel=0.3)
+    assert np.median(kde.D_para[bulk & valid]) == pytest.approx(D_para_true, rel=0.3)
 
 
 @pytest.mark.parametrize(
@@ -151,7 +147,8 @@ def test_diffusivity_qkde_single_frame_raises(diff_universe):
     u = diff_universe(n_atoms=10, n_frames=1, Lz=10.0)
     kde = LocalDiffusivityQKDE(
         u.select_atoms("all"),
-        n_points=10, bandwidth=0.1,
+        n_points=10,
+        bandwidth=0.1,
     )
     with pytest.raises(ValueError):
         kde.run()
@@ -204,9 +201,7 @@ def test_ito_correction(diff_universe, ito):
     kde2.run()
     bulk2 = (kde2.z_eval > 20) & (kde2.z_eval < 40)
     valid2 = kde2.n_eff_perp > 5
-    assert np.median(
-        kde2.D_perp[bulk2 & valid2]
-    ) == pytest.approx(0.05, rel=0.3)
+    assert np.median(kde2.D_perp[bulk2 & valid2]) == pytest.approx(0.05, rel=0.3)
 
 
 def test_package_exports():

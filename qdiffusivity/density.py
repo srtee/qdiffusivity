@@ -74,6 +74,9 @@ import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
 from MDAnalysis.units import constants
 
+# Trapezoidal integration: np.trapezoid (NumPy >= 2.0) or np.trapz (older).
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 # Epanechnikov kernel constants used by the Sheather-Jones plug-in.
 #   ||K||^2 = int K(u)^2 du = 3/5
 #   mu_2(K) = int u^2 K(u) du = 1/5
@@ -169,7 +172,7 @@ def sheather_jones_bw(z_data, z_lo, z_hi):
     kernel = np.where(np.abs(s) < 1.0, 0.75 * (1.0 - s * s) / h0, 0.0)
     f_pilot = kernel @ f_pilot_raw
 
-    integral = np.trapezoid(f_pilot, z_fine)
+    integral = _trapezoid(f_pilot, z_fine)
     if integral > 0:
         f_pilot = f_pilot / integral
 
@@ -178,7 +181,7 @@ def sheather_jones_bw(z_data, z_lo, z_hi):
     f_pp[0] = f_pp[1]
     f_pp[-1] = f_pp[-2]
 
-    int_fpp_sq = np.trapezoid(f_pp**2, z_fine)
+    int_fpp_sq = _trapezoid(f_pp**2, z_fine)
 
     if int_fpp_sq <= 0 or not np.isfinite(int_fpp_sq):
         return h_silver
@@ -406,8 +409,7 @@ class _TransverseDensityQKDEBase(AnalysisBase):
             "silverman",
         ):
             raise ValueError(
-                f"bandwidth must be 'auto', 'silverman' or "
-                f"a float, got {bandwidth!r}"
+                f"bandwidth must be 'auto', 'silverman' or a float, got {bandwidth!r}"
             )
         self._bandwidth = bandwidth
         self._chunk_size = int(chunk_size)
@@ -416,9 +418,7 @@ class _TransverseDensityQKDEBase(AnalysisBase):
         self._masses = self._ag.masses.astype(np.float64)
         if self._grouping == "residues":
             residx = self._ag.resindices
-            self._res_unique, self._res_inv = np.unique(
-                residx, return_inverse=True
-            )
+            self._res_unique, self._res_inv = np.unique(residx, return_inverse=True)
             self._n_res = self._res_unique.size
             self._res_mass = np.zeros(self._n_res, dtype=np.float64)
             np.add.at(self._res_mass, self._res_inv, self._masses)
@@ -458,10 +458,7 @@ class _TransverseDensityQKDEBase(AnalysisBase):
         z_bot = 0.0 if self._z_bot_user is None else float(self._z_bot_user)
         z_top = L if self._z_top_user is None else float(self._z_top_user)
         if z_top <= z_bot:
-            raise ValueError(
-                f"z_top ({z_top}) must be greater than "
-                f"z_bot ({z_bot})"
-            )
+            raise ValueError(f"z_top ({z_top}) must be greater than z_bot ({z_bot})")
 
         M = self._n_points
         self.z_eval = z_bot + (np.arange(M) + 0.5) * (z_top - z_bot) / M

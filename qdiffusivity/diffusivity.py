@@ -86,6 +86,9 @@ from MDAnalysis.analysis.base import AnalysisBase
 
 from .density import epanechnikov_kernel
 
+# Trapezoidal integration: np.trapezoid (NumPy >= 2.0) or np.trapz (older).
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 # Gaussian-kernel constants for the Sheather-Jones plug-in.
 #   ||K||_2^2 = 1 / (2*sqrt(pi)),  mu_2(K) = 1
 _GAU_KERNEL_NORM_SQ = 1.0 / (2.0 * np.sqrt(np.pi))
@@ -131,10 +134,7 @@ def _kernel(name):
             _EPA_KERNEL_NORM_SQ,
             _EPA_KERNEL_MU2_SQ,
         )
-    raise ValueError(
-        f"kernel must be 'gaussian' or 'epanechnikov', "
-        f"got {name!r}"
-    )
+    raise ValueError(f"kernel must be 'gaussian' or 'epanechnikov', got {name!r}")
 
 
 def silverman_bw(u_data):
@@ -218,7 +218,7 @@ def sheather_jones_bw(u_data, kernel="gaussian"):
     kernel_vals = kernel_fn(diff, h0)
     f_pilot = kernel_vals @ f_pilot_raw
 
-    integral = np.trapezoid(f_pilot, u_fine)
+    integral = _trapezoid(f_pilot, u_fine)
     if integral > 0:
         f_pilot = f_pilot / integral
 
@@ -227,7 +227,7 @@ def sheather_jones_bw(u_data, kernel="gaussian"):
     f_pp[0] = f_pp[1]
     f_pp[-1] = f_pp[-2]
 
-    int_fpp_sq = np.trapezoid(f_pp**2, u_fine)
+    int_fpp_sq = _trapezoid(f_pp**2, u_fine)
 
     if int_fpp_sq <= 0 or not np.isfinite(int_fpp_sq):
         return h_silver
@@ -340,7 +340,7 @@ def build_cdf(z_pooled):
     kernel /= kernel.sum()
     rho_smooth = np.convolve(rho_padded, kernel, mode="same")[n_pad:-n_pad]
 
-    integral = np.trapezoid(rho_smooth, centers)
+    integral = _trapezoid(rho_smooth, centers)
     if integral > 0:
         rho_smooth = rho_smooth / integral
 
@@ -350,9 +350,7 @@ def build_cdf(z_pooled):
     # precedes the differencing, so the derivative is not dominated by
     # Poisson noise from the histogram bins).
     rho_prime_smooth = np.empty_like(rho_smooth)
-    rho_prime_smooth[1:-1] = (
-        rho_smooth[2:] - rho_smooth[:-2]
-    ) / (2.0 * bin_width)
+    rho_prime_smooth[1:-1] = (rho_smooth[2:] - rho_smooth[:-2]) / (2.0 * bin_width)
     rho_prime_smooth[0] = rho_prime_smooth[1]
     rho_prime_smooth[-1] = rho_prime_smooth[-2]
 
@@ -631,12 +629,9 @@ class LocalDiffusivityQKDE(AnalysisBase):
         self._dim = dim
         self._para_dims = tuple(i for i in (0, 1, 2) if i != dim)
         self._n_points = int(n_points)
-        if isinstance(bandwidth, str) and bandwidth not in (
-            "auto", "silverman"
-        ):
+        if isinstance(bandwidth, str) and bandwidth not in ("auto", "silverman"):
             raise ValueError(
-                f"bandwidth must be 'auto', 'silverman' or a float, "
-                f"got {bandwidth!r}"
+                f"bandwidth must be 'auto', 'silverman' or a float, got {bandwidth!r}"
             )
         self._bandwidth = bandwidth
         if kernel not in ("gaussian", "epanechnikov"):
